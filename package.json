@@ -1,0 +1,6 @@
+{
+  "private": true,
+  "name": "x402-sdk",
+  "packageManager": "pnpm@10.14.0",
+  "scripts": {}
+}

@@ -1,0 +1,15 @@
+{
+  "private": true,
+  "name": "x402-sdk-typescript",
+  "packageManager": "pnpm@10.14.0",
+  "scripts": {
+    "build": "pnpm --filter @solana/x402 build",
+    "test": "pnpm --filter @solana/x402 test",
+    "test:integration": "pnpm --filter @solana/x402 test:integration",
+    "lint": "pnpm --filter @solana/x402 lint:check",
+    "format": "pnpm --filter @solana/x402 format:check"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}

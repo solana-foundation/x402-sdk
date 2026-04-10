@@ -1,0 +1,7 @@
+/target
+/node_modules
+**/node_modules
+Cargo.lock
+rust/target
+typescript/packages/x402/coverage
+typescript/packages/x402/dist

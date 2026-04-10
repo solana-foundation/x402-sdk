@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Rust tests
+        run: cargo test
+        working-directory: rust
+
+  typescript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - name: Install TypeScript workspace
+        run: pnpm install
+        working-directory: typescript
+      - name: Build TypeScript package
+        run: pnpm --filter @solana/x402 build
+        working-directory: typescript
+      - name: Test TypeScript package
+        run: pnpm --filter @solana/x402 test:coverage
+        working-directory: typescript
+
+  interop:
+    runs-on: ubuntu-latest
+    needs:
+      - rust
+      - typescript
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - name: Cache surfpool-sdk build
+        id: cache-surfpool
+        uses: actions/cache@v4
+        with:
+          path: /tmp/surfpool
+          key: surfpool-sdk-${{ runner.os }}-${{ runner.arch }}-v1
+      - name: Clone and build surfpool-sdk
+        if: steps.cache-surfpool.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch feat/sdk https://github.com/solana-foundation/surfpool.git /tmp/surfpool
+          cd /tmp/surfpool/crates/sdk-node
+          npm install
+          npm run build
+      - name: Install TypeScript workspace
+        run: pnpm install
+        working-directory: typescript
+      - name: Build TypeScript package
+        run: pnpm --filter @solana/x402 build
+        working-directory: typescript
+      - name: Install interop harness
+        run: pnpm install
+        working-directory: tests/interop
+      - name: Link surfpool-sdk
+        run: |
+          mkdir -p node_modules
+          rm -rf node_modules/surfpool-sdk
+          ln -sfn /tmp/surfpool/crates/sdk-node node_modules/surfpool-sdk
+        working-directory: tests/interop
+      - name: Run interop tests
+        run: pnpm test
+        working-directory: tests/interop
+        env:
+          X402_INTEROP_CLIENTS: typescript
+          X402_INTEROP_SERVERS: typescript
