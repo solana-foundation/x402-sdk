@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   ExactSvmScheme,
+  createRpcClient,
   validateSvmAddress,
   normalizeNetwork,
   getUsdcAddress,
@@ -20,6 +21,7 @@ import {
   PYUSD_DEVNET_ADDRESS,
   CASH_MAINNET_ADDRESS,
 } from "../../src/index";
+import { ExactSvmSchemeV1 as ExactV1BarrelScheme } from "../../src/exact/v1";
 import { ExactSvmScheme as ServerExactSvmScheme } from "../../src/server/exact/scheme";
 
 describe("@x402/svm", () => {
@@ -27,6 +29,7 @@ describe("@x402/svm", () => {
     expect(ExactSvmScheme).toBeDefined();
     expect(ExactSvmScheme).toBeDefined();
     expect(ExactSvmScheme).toBeDefined();
+    expect(ExactV1BarrelScheme).toBeDefined();
   });
 
   describe("validateSvmAddress", () => {
@@ -67,6 +70,14 @@ describe("@x402/svm", () => {
       expect(() => normalizeNetwork("solana:unknown" as never)).toThrow("Unsupported SVM network");
       expect(() => normalizeNetwork("ethereum:1" as never)).toThrow("Unsupported SVM network");
       expect(() => normalizeNetwork("unknown-network" as never)).toThrow("Unsupported SVM network");
+    });
+  });
+
+  describe("createRpcClient", () => {
+    it("should create RPC clients for each supported Solana network", () => {
+      expect(createRpcClient(SOLANA_MAINNET_CAIP2, "https://mainnet.example.com")).toBeDefined();
+      expect(createRpcClient(SOLANA_DEVNET_CAIP2, "https://devnet.example.com")).toBeDefined();
+      expect(createRpcClient(SOLANA_TESTNET_CAIP2, "https://testnet.example.com")).toBeDefined();
     });
   });
 

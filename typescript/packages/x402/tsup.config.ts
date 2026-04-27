@@ -19,6 +19,7 @@ const baseConfig = {
     "protocol/index": "src/protocol/index.ts",
     "protocol/schemes/index": "src/protocol/schemes/index.ts",
     "protocol/schemes/exact/index": "src/protocol/schemes/exact/index.ts",
+    "siwx/index": "src/siwx/index.ts",
     "v1/index": "src/v1/index.ts",
     "v1/exact/index": "src/v1/exact/index.ts",
     "v1/exact/client/index": "src/v1/exact/client/index.ts",

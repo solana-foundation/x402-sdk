@@ -395,6 +395,8 @@ pub struct PaymentRequiredEnvelope {
     pub accepts: Vec<PaymentRequirements>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extensions: Option<serde_json::Value>,
 }
 
 impl PaymentRequiredEnvelope {
@@ -707,6 +709,20 @@ mod tests {
                 resource_info: None,
             }],
             error: Some("required".to_string()),
+            extensions: Some(serde_json::json!({
+                "sign-in-with-x": {
+                    "domain": "example.com",
+                    "uri": "https://example.com",
+                    "version": "1",
+                    "nonce": "nonce",
+                    "issuedAt": "2026-04-27T00:00:00Z",
+                    "supportedChains": [{
+                        "chainId": SOLANA_DEVNET,
+                        "type": "ed25519",
+                        "signatureScheme": "siws"
+                    }]
+                }
+            })),
         };
         let signature = PaymentSignatureEnvelope {
             scheme: None,
@@ -727,6 +743,7 @@ mod tests {
 
         assert!(required_json.contains(&format!("\"{X402_VERSION_FIELD}\":{X402_VERSION_V2}")));
         assert!(required_json.contains("\"accepts\""));
+        assert!(required_json.contains("\"sign-in-with-x\""));
         assert!(required_json.contains("\"payTo\":\"recipient\""));
         assert!(required_json.contains("\"asset\":\"SOL\""));
         assert!(signature_json.contains("\"accepted\""));

@@ -580,6 +580,37 @@ mod tests {
     }
 
     #[test]
+    fn parse_x402_v2_auth_only_header_returns_none() {
+        let json = serde_json::json!({
+            X402_VERSION_FIELD: X402_VERSION_V2,
+            "accepts": [],
+            "extensions": {
+                crate::SIGN_IN_WITH_X: {
+                    "domain": "api.example.com",
+                    "uri": "https://api.example.com",
+                    "version": "1",
+                    "nonce": "nonce-123",
+                    "issuedAt": "2026-04-27T00:00:00Z",
+                    "supportedChains": [{
+                        "chainId": SOLANA_MAINNET,
+                        "type": "ed25519",
+                        "signatureScheme": "siws"
+                    }]
+                }
+            }
+        });
+        let headers = vec![(
+            PAYMENT_REQUIRED_HEADER.to_string(),
+            base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                json.to_string().as_bytes(),
+            ),
+        )];
+
+        assert!(parse_x402_challenge(&headers, None).is_none());
+    }
+
+    #[test]
     fn parse_x402_v2_header_preserves_selected_accepted_and_resource() {
         let selected = serde_json::json!({
             "scheme": EXACT_SCHEME,

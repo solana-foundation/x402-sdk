@@ -125,6 +125,7 @@ impl X402 {
             resource: requirements.resource_info(),
             accepts: vec![requirements],
             error: None,
+            extensions: None,
         })
     }
 

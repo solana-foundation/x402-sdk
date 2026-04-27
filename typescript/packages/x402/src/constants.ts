@@ -28,6 +28,12 @@ export const X402_V2_PAYMENT_REQUIRED_HEADER = "PAYMENT-REQUIRED";
 export const X402_V2_PAYMENT_RESPONSE_HEADER = "PAYMENT-RESPONSE";
 
 /**
+ * Canonical sign-in extension key and HTTP header.
+ */
+export const SIGN_IN_WITH_X = "sign-in-with-x";
+export const SIGN_IN_WITH_X_HEADER = "SIGN-IN-WITH-X";
+
+/**
  * Current default x402 header names.
  */
 export const PAYMENT_SIGNATURE_HEADER = X402_V2_PAYMENT_HEADER;

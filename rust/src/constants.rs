@@ -30,6 +30,12 @@ pub const X402_V2_PAYMENT_REQUIRED_HEADER: &str = "PAYMENT-REQUIRED";
 /// v2 settlement response header.
 pub const X402_V2_PAYMENT_RESPONSE_HEADER: &str = "PAYMENT-RESPONSE";
 
+/// Canonical sign-in extension key.
+pub const SIGN_IN_WITH_X: &str = "sign-in-with-x";
+
+/// Header carrying a signed sign-in-with-x payload.
+pub const SIGN_IN_WITH_X_HEADER: &str = "SIGN-IN-WITH-X";
+
 /// Header carrying x402 payment requirements from server to client.
 pub const PAYMENT_REQUIRED_HEADER: &str = X402_V2_PAYMENT_REQUIRED_HEADER;
 

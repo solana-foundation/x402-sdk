@@ -20,10 +20,12 @@ pub mod server;
 
 pub mod constants;
 pub mod error;
+pub mod siwx;
 
 pub use constants::*;
 pub use error::Error;
 pub use protocol::schemes::exact;
+pub use siwx::*;
 
 // Re-export crates callers need to use with the payment builder.
 pub use solana_keychain;

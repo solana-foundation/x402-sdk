@@ -8,6 +8,7 @@ export * as client from "./client";
 export * as facilitator from "./facilitator";
 export * as protocol from "./protocol";
 export * as server from "./server";
+export * as siwx from "./siwx";
 export * as v1 from "./v1";
 
 export * from "./constants";
@@ -38,4 +39,5 @@ export type { ExactSvmPayloadV1, ExactSvmPayloadV2 } from "./protocol/schemes/ex
 export * from "./protocol/schemes/exact";
 
 export { SettlementCache } from "./settlement-cache";
+export * from "./siwx";
 export * from "./utils";

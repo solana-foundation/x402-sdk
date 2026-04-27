@@ -219,6 +219,7 @@ fn payment_required_header_for(
         resource: requirements.resource_info(),
         accepts: vec![requirements.clone()],
         error: None,
+        extensions: None,
     };
     let json = serde_json::to_string(&envelope)?;
     Ok((
