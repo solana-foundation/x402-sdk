@@ -27,6 +27,9 @@ import {
   USDC_DEVNET_ADDRESS,
   USDC_TESTNET_ADDRESS,
   USDT_MAINNET_ADDRESS,
+  USDG_MAINNET_ADDRESS,
+  USDG_DEVNET_ADDRESS,
+  USDG_TESTNET_ADDRESS,
   PYUSD_MAINNET_ADDRESS,
   PYUSD_DEVNET_ADDRESS,
   PYUSD_TESTNET_ADDRESS,
@@ -36,6 +39,7 @@ import {
   SOLANA_TESTNET_CAIP2,
   V1_TO_V2_NETWORK_MAP,
   STABLECOIN_MINTS,
+  STABLECOIN_TOKEN_PROGRAMS,
 } from "./protocol/schemes/exact/constants";
 import type { ExactSvmPayloadV1 } from "./protocol/schemes/exact/types";
 
@@ -194,6 +198,27 @@ export function getUsdtAddress(network: Network): string {
 }
 
 /**
+ * Get the official USDG mint address for a supported network.
+ *
+ * @param network - Network identifier (CAIP-2 or V1 format)
+ * @returns USDG mint address for the network
+ */
+export function getUsdgAddress(network: Network): string {
+  const caip2Network = normalizeNetwork(network);
+
+  switch (caip2Network) {
+    case SOLANA_MAINNET_CAIP2:
+      return USDG_MAINNET_ADDRESS;
+    case SOLANA_DEVNET_CAIP2:
+      return USDG_DEVNET_ADDRESS;
+    case SOLANA_TESTNET_CAIP2:
+      return USDG_TESTNET_ADDRESS;
+    default:
+      throw new Error(`No USDG address configured for network: ${network}`);
+  }
+}
+
+/**
  * Get the official PYUSD mint address for a supported network.
  *
  * @param network - Network identifier (CAIP-2 or V1 format)
@@ -233,7 +258,7 @@ export function getCashAddress(network: Network): string {
 /**
  * Resolve a supported stablecoin symbol to its mint address.
  *
- * @param symbol - Stablecoin symbol, currently USDC/USD, USDT, PYUSD, or CASH
+ * @param symbol - Stablecoin symbol, currently USDC/USD, USDT, USDG, PYUSD, or CASH
  * @param network - Network identifier (CAIP-2 or V1 format)
  * @returns Stablecoin mint address for the network
  */
@@ -249,6 +274,44 @@ export function getStablecoinAddress(symbol: string, network: Network): string {
   }
 
   return mint;
+}
+
+/**
+ * Return the supported stablecoin symbol for a symbol or known mint address.
+ *
+ * @param currency - Stablecoin symbol or mint address
+ * @returns Stablecoin symbol when recognized
+ */
+export function getStablecoinSymbol(currency: string): keyof typeof STABLECOIN_MINTS | undefined {
+  const normalizedSymbol = currency.toUpperCase() === "USD" ? "USDC" : currency.toUpperCase();
+  if (normalizedSymbol in STABLECOIN_MINTS) {
+    return normalizedSymbol as keyof typeof STABLECOIN_MINTS;
+  }
+
+  for (const [symbol, mintByNetwork] of Object.entries(STABLECOIN_MINTS)) {
+    if (Object.values(mintByNetwork).includes(currency)) {
+      return symbol as keyof typeof STABLECOIN_MINTS;
+    }
+  }
+}
+
+/**
+ * Return the known token program for a supported stablecoin symbol or mint address.
+ *
+ * @param currency - Stablecoin symbol or mint address
+ * @param network - Network identifier (CAIP-2 or V1 format)
+ * @returns SPL Token or Token-2022 program address
+ */
+export function getStablecoinTokenProgram(currency: string, network: Network): string {
+  let symbol = getStablecoinSymbol(currency);
+  if (!symbol) {
+    try {
+      symbol = getStablecoinSymbol(getStablecoinAddress(currency, network));
+    } catch {
+      symbol = undefined;
+    }
+  }
+  return symbol ? STABLECOIN_TOKEN_PROGRAMS[symbol] : TOKEN_PROGRAM_ADDRESS.toString();
 }
 
 /**

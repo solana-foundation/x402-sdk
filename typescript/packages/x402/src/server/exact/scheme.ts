@@ -141,7 +141,7 @@ export class ExactSvmScheme implements SchemeNetworkServer {
    * @returns The parsed asset amount
    */
   private defaultMoneyConversion(amount: number, network: Network, symbol: string): AssetAmount {
-    // USDC and USDT both use 6 decimals on Solana.
+    // Supported stablecoins in this package use 6 decimals on Solana.
     const tokenAmount = convertToTokenAmount(amount.toString(), 6);
 
     return {

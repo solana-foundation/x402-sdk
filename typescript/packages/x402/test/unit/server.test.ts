@@ -6,6 +6,8 @@ import {
   SOLANA_TESTNET_CAIP2,
   USDC_DEVNET_ADDRESS,
   USDC_MAINNET_ADDRESS,
+  USDG_DEVNET_ADDRESS,
+  USDG_MAINNET_ADDRESS,
   USDT_MAINNET_ADDRESS,
 } from "../../src/protocol/schemes/exact";
 
@@ -55,6 +57,12 @@ describe("ExactSvmScheme", () => {
         expect(result.amount).toBe("4020000");
         expect(result.asset).toBe(USDT_MAINNET_ADDRESS);
       });
+
+      it("should parse explicit USDG prices", async () => {
+        const result = await server.parsePrice("4.02 USDG", network);
+        expect(result.amount).toBe("4020000");
+        expect(result.asset).toBe(USDG_MAINNET_ADDRESS);
+      });
     });
 
     describe("Solana Devnet network", () => {
@@ -63,6 +71,12 @@ describe("ExactSvmScheme", () => {
       it("should use Devnet USDC address", async () => {
         const result = await server.parsePrice("1.00", network);
         expect(result.asset).toBe(USDC_DEVNET_ADDRESS);
+        expect(result.amount).toBe("1000000");
+      });
+
+      it("should use Devnet USDG address", async () => {
+        const result = await server.parsePrice("1.00 USDG", network);
+        expect(result.asset).toBe(USDG_DEVNET_ADDRESS);
         expect(result.amount).toBe("1000000");
       });
 

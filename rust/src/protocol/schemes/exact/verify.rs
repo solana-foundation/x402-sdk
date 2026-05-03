@@ -782,6 +782,11 @@ mod tests {
         pyusd.cluster = Some(SOLANA_DEVNET.to_string());
         assert_eq!(resolve_expected_mint(&pyusd), mints::PYUSD_DEVNET);
 
+        let mut usdg = requirements("1000");
+        usdg.currency = "USDG".to_string();
+        usdg.cluster = Some(SOLANA_DEVNET.to_string());
+        assert_eq!(resolve_expected_mint(&usdg), mints::USDG_DEVNET);
+
         let mut cash = requirements("1000");
         cash.currency = "CASH".to_string();
         assert_eq!(resolve_expected_mint(&cash), mints::CASH_MAINNET);

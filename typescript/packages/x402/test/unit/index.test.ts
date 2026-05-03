@@ -6,17 +6,24 @@ import {
   normalizeNetwork,
   getUsdcAddress,
   getUsdtAddress,
+  getUsdgAddress,
   getPyusdAddress,
   getCashAddress,
   getStablecoinAddress,
+  getStablecoinSymbol,
+  getStablecoinTokenProgram,
   convertToTokenAmount,
   SVM_ADDRESS_REGEX,
   SOLANA_MAINNET_CAIP2,
   SOLANA_DEVNET_CAIP2,
   SOLANA_TESTNET_CAIP2,
+  TOKEN_2022_PROGRAM_ADDRESS,
+  TOKEN_PROGRAM_ADDRESS,
   USDC_MAINNET_ADDRESS,
   USDC_DEVNET_ADDRESS,
   USDT_MAINNET_ADDRESS,
+  USDG_MAINNET_ADDRESS,
+  USDG_DEVNET_ADDRESS,
   PYUSD_MAINNET_ADDRESS,
   PYUSD_DEVNET_ADDRESS,
   CASH_MAINNET_ADDRESS,
@@ -109,6 +116,27 @@ describe("@x402/svm", () => {
       expect(getStablecoinAddress("USD", SOLANA_MAINNET_CAIP2)).toBe(USDC_MAINNET_ADDRESS);
     });
 
+    it("should return USDG addresses", () => {
+      expect(getUsdgAddress(SOLANA_MAINNET_CAIP2)).toBe(USDG_MAINNET_ADDRESS);
+      expect(getUsdgAddress(SOLANA_DEVNET_CAIP2)).toBe(USDG_DEVNET_ADDRESS);
+      expect(getStablecoinAddress("USDG", SOLANA_DEVNET_CAIP2)).toBe(USDG_DEVNET_ADDRESS);
+    });
+
+    it("should categorize stablecoins by token program", () => {
+      expect(getStablecoinSymbol(USDG_MAINNET_ADDRESS)).toBe("USDG");
+      expect(getStablecoinTokenProgram("USDC", SOLANA_MAINNET_CAIP2)).toBe(TOKEN_PROGRAM_ADDRESS);
+      expect(getStablecoinTokenProgram("USDT", SOLANA_MAINNET_CAIP2)).toBe(TOKEN_PROGRAM_ADDRESS);
+      expect(getStablecoinTokenProgram("USDG", SOLANA_DEVNET_CAIP2)).toBe(
+        TOKEN_2022_PROGRAM_ADDRESS,
+      );
+      expect(getStablecoinTokenProgram("PYUSD", SOLANA_DEVNET_CAIP2)).toBe(
+        TOKEN_2022_PROGRAM_ADDRESS,
+      );
+      expect(getStablecoinTokenProgram("CASH", SOLANA_MAINNET_CAIP2)).toBe(
+        TOKEN_2022_PROGRAM_ADDRESS,
+      );
+    });
+
     it("should return PYUSD addresses", () => {
       expect(getPyusdAddress(SOLANA_MAINNET_CAIP2)).toBe(PYUSD_MAINNET_ADDRESS);
       expect(getPyusdAddress(SOLANA_DEVNET_CAIP2)).toBe(PYUSD_DEVNET_ADDRESS);
@@ -190,7 +218,14 @@ describe("@x402/svm", () => {
         expect(result.asset).toBe(USDC_MAINNET_ADDRESS);
       });
 
-      it("should parse explicit PYUSD and CASH prices", async () => {
+      it("should parse explicit USDG, PYUSD, and CASH prices", async () => {
+        const usdg = await server.parsePrice(
+          "0.10 USDG",
+          "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+        );
+        expect(usdg.amount).toBe("100000");
+        expect(usdg.asset).toBe(USDG_DEVNET_ADDRESS);
+
         const pyusd = await server.parsePrice(
           "0.10 PYUSD",
           "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
@@ -286,6 +321,8 @@ describe("@x402/svm", () => {
       expect(USDC_MAINNET_ADDRESS).toBe("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
       expect(USDC_DEVNET_ADDRESS).toBe("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
       expect(USDT_MAINNET_ADDRESS).toBe("Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB");
+      expect(USDG_MAINNET_ADDRESS).toBe("2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH");
+      expect(USDG_DEVNET_ADDRESS).toBe("4F6PM96JJxngmHnZLBh9n58RH4aTVNWvDs2nuwrT5BP7");
       expect(PYUSD_MAINNET_ADDRESS).toBe("2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo");
       expect(PYUSD_DEVNET_ADDRESS).toBe("CXk2AMBfi3TwaEL2468s6zP8xq9NxTXjp9gjMgzeUynM");
       expect(CASH_MAINNET_ADDRESS).toBe("CASHx9KJUStyftLFWGvEVf59SGeG9sh5FfcnZMVPCASH");

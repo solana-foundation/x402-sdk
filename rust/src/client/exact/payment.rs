@@ -750,6 +750,11 @@ mod tests {
             Some("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU")
         );
         assert_eq!(resolve_mint("USDT", None), Some(mints::USDT_MAINNET));
+        assert_eq!(resolve_mint("USDG", None), Some(mints::USDG_MAINNET));
+        assert_eq!(
+            resolve_mint("USDG", Some("devnet")),
+            Some(mints::USDG_DEVNET)
+        );
         assert_eq!(resolve_mint("PYUSD", None), Some(mints::PYUSD_MAINNET));
         assert_eq!(
             resolve_mint("PYUSD", Some("devnet")),
