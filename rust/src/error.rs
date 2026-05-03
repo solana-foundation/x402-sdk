@@ -25,6 +25,12 @@ pub enum Error {
     #[error("Destination ATA does not belong to expected recipient")]
     AtaMismatch,
 
+    #[error(
+        "Signed against {received} but the server expects {expected}. \
+         Switch your client RPC to {expected} and re-sign."
+    )]
+    WrongNetwork { expected: String, received: String },
+
     #[error("Transaction signature already consumed")]
     SignatureConsumed,
 

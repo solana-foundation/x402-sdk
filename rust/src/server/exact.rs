@@ -269,6 +269,15 @@ impl X402 {
                         .map_err(|e| Error::Other(format!("Invalid transaction payload: {e}")))?;
                 let tx: VersionedTransaction = bincode::deserialize(&decoded)
                     .map_err(|e| Error::Other(format!("Invalid transaction payload: {e}")))?;
+
+                // Reject up-front if the client signed against the wrong
+                // network (e.g. localnet keypair pointed at a mainnet
+                // server). Cheaper and clearer than letting broadcast fail.
+                check_network_blockhash(
+                    &self.config.network,
+                    &tx.message.recent_blockhash().to_string(),
+                )?;
+
                 let managed_signers = managed_signers_for_requirements(requirements)?;
                 verify_exact_versioned_transaction(&tx, requirements, &managed_signers)?;
                 Ok(VerifiedExactPayment::Transaction(tx))
@@ -302,6 +311,35 @@ impl X402 {
 
         self.exact_requirements("0", ExactOptions::default())
     }
+}
+
+/// Surfpool localnet validators stamp every blockhash with this prefix so
+/// servers configured for any non-`localnet` cluster can detect a
+/// wrong-RPC client mistake before broadcast.
+pub const SURFPOOL_BLOCKHASH_PREFIX: &str = "SURFNETxSAFEHASH";
+
+/// Network slug for Solana's local validator. The only network for which
+/// a Surfpool-prefixed blockhash is valid.
+pub const LOCALNET_NETWORK: &str = "localnet";
+
+/// Pure check: rejects a credential if the signed blockhash carries the
+/// Surfpool prefix and the server is configured for any network other
+/// than `localnet`.
+///
+/// Returns `Ok(())` in every other case — a non-Surfpool blockhash is
+/// undetectable as wrong-cluster from the slug alone, so we let the
+/// downstream broadcast handle it.
+pub fn check_network_blockhash(network: &str, blockhash_b58: &str) -> Result<(), Error> {
+    if !blockhash_b58.starts_with(SURFPOOL_BLOCKHASH_PREFIX) {
+        return Ok(());
+    }
+    if network == LOCALNET_NETWORK {
+        return Ok(());
+    }
+    Err(Error::WrongNetwork {
+        expected: network.to_string(),
+        received: LOCALNET_NETWORK.to_string(),
+    })
 }
 
 fn managed_signers_for_requirements(
@@ -600,5 +638,100 @@ mod tests {
             serde_json::to_vec(&envelope).unwrap(),
         );
         assert!(x402.verify_payment_signature(&header).await.is_err());
+    }
+
+    // ── check_network_blockhash ────────────────────────────────────────────
+    //
+    // Pure function — no I/O, no async, no fixtures. The check is asymmetric:
+    // a Surfpool-prefixed blockhash is only valid on `localnet`, but a
+    // non-prefixed blockhash is accepted on any network (we can't tell
+    // from a non-prefixed hash what real cluster it came from).
+
+    #[test]
+    fn network_check_localnet_with_surfpool_hash_ok() {
+        assert!(
+            check_network_blockhash("localnet", "SURFNETxSAFEHASHxxxxxxxxxxxxxxxxxxx1892bcad")
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn network_check_localnet_with_real_hash_ok() {
+        assert!(check_network_blockhash("localnet", "11111111111111111111111111111111").is_ok());
+    }
+
+    #[test]
+    fn network_check_mainnet_with_real_hash_ok() {
+        assert!(
+            check_network_blockhash("mainnet", "9zrUHnA1nCByPksy3aL8tQ47vqdaG2vnFs4HrxgcZj4F")
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn network_check_devnet_with_real_hash_ok() {
+        assert!(
+            check_network_blockhash("devnet", "EkSnNWid2cvwEVnVx9aBqawnmiCNiDgp3gUdkDPTKN1N")
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn network_check_mainnet_rejects_surfpool_hash() {
+        let err = check_network_blockhash("mainnet", "SURFNETxSAFEHASHxxxxxxxxxxxxxxxxxxx1892bcad")
+            .unwrap_err();
+        match &err {
+            Error::WrongNetwork { expected, received } => {
+                assert_eq!(expected, "mainnet");
+                assert_eq!(received, "localnet");
+            }
+            other => panic!("expected WrongNetwork, got {other:?}"),
+        }
+        // The Display impl must name both sides of the mismatch and give
+        // an actionable next step.
+        let displayed = err.to_string();
+        assert!(
+            displayed.contains("Signed against localnet"),
+            "missing received-side: {displayed}"
+        );
+        assert!(
+            displayed.contains("server expects mainnet"),
+            "missing expected-side: {displayed}"
+        );
+        assert!(
+            displayed.contains("re-sign"),
+            "missing actionable hint: {displayed}"
+        );
+    }
+
+    #[test]
+    fn network_check_devnet_rejects_surfpool_hash() {
+        let err = check_network_blockhash("devnet", "SURFNETxSAFEHASHxxxxxxxxxxxxxxxxxxx1892bcad")
+            .unwrap_err();
+        assert!(matches!(err, Error::WrongNetwork { ref expected, .. } if expected == "devnet"));
+        assert!(err.to_string().contains("server expects devnet"));
+    }
+
+    #[test]
+    fn network_check_partial_prefix_does_not_match() {
+        // "SURFNETx" alone (8 chars) is NOT the full prefix and must not
+        // be misclassified as a Surfpool blockhash.
+        assert!(check_network_blockhash("mainnet", "SURFNETx9zrUHnA1nCByPksy").is_ok());
+    }
+
+    #[test]
+    fn network_check_exact_prefix_only_is_treated_as_surfpool() {
+        assert!(check_network_blockhash("localnet", SURFPOOL_BLOCKHASH_PREFIX).is_ok());
+        assert!(check_network_blockhash("mainnet", SURFPOOL_BLOCKHASH_PREFIX).is_err());
+    }
+
+    #[test]
+    fn network_check_non_surfpool_hash_passes_anywhere() {
+        // The check is asymmetric: a real-cluster-looking blockhash is
+        // accepted on every network because we can't tell from a
+        // non-prefixed hash which real cluster it came from.
+        assert!(check_network_blockhash("mainnet", "11111111111111111111111111111111").is_ok());
+        assert!(check_network_blockhash("devnet", "11111111111111111111111111111111").is_ok());
+        assert!(check_network_blockhash("localnet", "11111111111111111111111111111111").is_ok());
     }
 }

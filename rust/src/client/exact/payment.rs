@@ -508,6 +508,22 @@ mod tests {
         bincode::deserialize(&bytes).unwrap()
     }
 
+    fn memo_instruction_from_tx(
+        tx: &VersionedTransaction,
+    ) -> &solana_message::compiled_instruction::CompiledInstruction {
+        let memo_program = Pubkey::from_str(programs::MEMO_PROGRAM).unwrap();
+        tx.message
+            .instructions()
+            .iter()
+            .find(|instruction| {
+                tx.message
+                    .static_account_keys()
+                    .get(instruction.program_id_index as usize)
+                    == Some(&memo_program)
+            })
+            .expect("memo instruction")
+    }
+
     #[test]
     fn parse_x402_express_body() {
         let body = serde_json::json!({
@@ -765,6 +781,13 @@ mod tests {
         let tx = decode_tx(&transaction);
         assert!(tx.message.static_account_keys().contains(&signer.pubkey));
         assert_eq!(tx.message.instructions().len(), 4);
+        let memo_ix = memo_instruction_from_tx(&tx);
+        assert!(memo_ix.accounts.is_empty());
+        assert_eq!(memo_ix.data.len(), 32);
+        assert!(std::str::from_utf8(&memo_ix.data)
+            .unwrap()
+            .chars()
+            .all(|ch| ch.is_ascii_hexdigit()));
     }
 
     #[tokio::test]
@@ -784,6 +807,61 @@ mod tests {
         assert_eq!(tx.message.instructions().len(), 4);
         assert_eq!(tx.message.instructions()[0].data[0], 2);
         assert_eq!(tx.message.instructions()[1].data[0], 3);
+        assert!(memo_instruction_from_tx(&tx).accounts.is_empty());
+    }
+
+    #[tokio::test]
+    async fn build_payment_uses_server_requested_memo() {
+        let signer = MockSigner {
+            pubkey: Pubkey::new_unique(),
+            fail_sign: false,
+        };
+        let rpc = RpcClient::new("http://localhost:8899".to_string());
+        let mut requirements = test_requirements("USDC");
+        requirements.extra = Some(serde_json::json!({ "memo": "order_12345" }));
+
+        let payload = build_payment(&signer, &rpc, &requirements).await.unwrap();
+        let PaymentProof::Transaction { transaction } = payload.proof else {
+            panic!("expected transaction payload");
+        };
+        let tx = decode_tx(&transaction);
+        let memo_ix = memo_instruction_from_tx(&tx);
+
+        assert!(memo_ix.accounts.is_empty());
+        assert_eq!(memo_ix.data, b"order_12345");
+    }
+
+    #[tokio::test]
+    async fn build_payment_without_server_memo_generates_unique_nonce_memos() {
+        let signer = MockSigner {
+            pubkey: Pubkey::new_unique(),
+            fail_sign: false,
+        };
+        let rpc = RpcClient::new("http://localhost:8899".to_string());
+        let requirements = test_requirements("USDC");
+
+        let first = build_payment(&signer, &rpc, &requirements).await.unwrap();
+        let second = build_payment(&signer, &rpc, &requirements).await.unwrap();
+        let PaymentProof::Transaction { transaction: first } = first.proof else {
+            panic!("expected transaction payload");
+        };
+        let PaymentProof::Transaction {
+            transaction: second,
+        } = second.proof
+        else {
+            panic!("expected transaction payload");
+        };
+        let first_tx = decode_tx(&first);
+        let second_tx = decode_tx(&second);
+        let first_memo = std::str::from_utf8(&memo_instruction_from_tx(&first_tx).data).unwrap();
+        let second_memo = std::str::from_utf8(&memo_instruction_from_tx(&second_tx).data).unwrap();
+
+        assert_ne!(first, second);
+        assert_ne!(first_memo, second_memo);
+        assert_eq!(first_memo.len(), 32);
+        assert_eq!(second_memo.len(), 32);
+        assert!(first_memo.chars().all(|ch| ch.is_ascii_hexdigit()));
+        assert!(second_memo.chars().all(|ch| ch.is_ascii_hexdigit()));
     }
 
     #[tokio::test]

@@ -6,7 +6,10 @@ use solana_rpc_client::rpc_client::RpcClient;
 use solana_signature::Signature;
 use solana_transaction::versioned::VersionedTransaction;
 use solana_transaction::Transaction;
-use solana_transaction_status::{EncodedConfirmedTransactionWithStatusMeta, UiTransactionEncoding};
+use solana_transaction_status::{
+    EncodedConfirmedTransactionWithStatusMeta, EncodedTransaction, UiInstruction, UiMessage,
+    UiParsedInstruction, UiTransactionEncoding,
+};
 
 use super::{programs, resolve_stablecoin_mint, PaymentRequirements};
 use crate::error::Error;
@@ -33,6 +36,16 @@ pub fn verify_transaction_details(
     // TODO: Parse jsonParsed instructions from the encoded transaction
     // and verify SOL/SPL transfers match expected amounts and recipients.
     let _ = &requirements.recipient;
+
+    if let Some(expected_memo) = expected_memo(requirements) {
+        let memo_instructions = transaction_memos(tx)?;
+        if memo_instructions.len() != 1 {
+            return invalid("invalid_exact_svm_payload_memo_count");
+        }
+        if memo_instructions[0] != expected_memo {
+            return invalid("invalid_exact_svm_payload_memo_mismatch");
+        }
+    }
 
     Ok(())
 }
@@ -286,6 +299,101 @@ fn resolve_expected_mint(requirements: &PaymentRequirements) -> String {
         .to_string()
 }
 
+fn transaction_memos(tx: &EncodedConfirmedTransactionWithStatusMeta) -> Result<Vec<String>, Error> {
+    let EncodedTransaction::Json(ui_tx) = &tx.transaction.transaction else {
+        return Ok(Vec::new());
+    };
+
+    match &ui_tx.message {
+        UiMessage::Parsed(message) => {
+            let account_keys = message
+                .account_keys
+                .iter()
+                .map(|account| account.pubkey.clone())
+                .collect::<Vec<_>>();
+            message
+                .instructions
+                .iter()
+                .filter_map(|instruction| {
+                    memo_text_from_ui_instruction(instruction, Some(&account_keys))
+                })
+                .collect()
+        }
+        UiMessage::Raw(message) => message
+            .instructions
+            .iter()
+            .filter_map(|instruction| {
+                let program = message
+                    .account_keys
+                    .get(instruction.program_id_index as usize)
+                    .map(String::as_str)?;
+                if program != programs::MEMO_PROGRAM {
+                    return None;
+                }
+                Some(decode_memo_data(&instruction.data))
+            })
+            .collect(),
+    }
+}
+
+fn memo_text_from_ui_instruction(
+    instruction: &UiInstruction,
+    raw_account_keys: Option<&[String]>,
+) -> Option<Result<String, Error>> {
+    match instruction {
+        UiInstruction::Parsed(UiParsedInstruction::Parsed(parsed)) => {
+            if parsed.program_id != programs::MEMO_PROGRAM && parsed.program != "spl-memo" {
+                return None;
+            }
+            Some(
+                parsed_memo_text(&parsed.parsed).ok_or_else(|| {
+                    Error::Other("invalid_exact_svm_payload_memo_mismatch".to_string())
+                }),
+            )
+        }
+        UiInstruction::Parsed(UiParsedInstruction::PartiallyDecoded(decoded)) => {
+            if decoded.program_id != programs::MEMO_PROGRAM {
+                return None;
+            }
+            Some(decode_memo_data(&decoded.data))
+        }
+        UiInstruction::Compiled(compiled) => {
+            let account_keys = raw_account_keys?;
+            let program = account_keys
+                .get(compiled.program_id_index as usize)
+                .map(String::as_str)?;
+            if program != programs::MEMO_PROGRAM {
+                return None;
+            }
+            Some(decode_memo_data(&compiled.data))
+        }
+    }
+}
+
+fn parsed_memo_text(parsed: &serde_json::Value) -> Option<String> {
+    match parsed {
+        serde_json::Value::String(memo) => Some(memo.clone()),
+        serde_json::Value::Object(parsed) => parsed
+            .get("info")
+            .and_then(|info| info.as_object())
+            .and_then(|info| {
+                info.get("memo")
+                    .or_else(|| info.get("data"))
+                    .and_then(|value| value.as_str())
+            })
+            .map(str::to_string),
+        _ => None,
+    }
+}
+
+fn decode_memo_data(encoded: &str) -> Result<String, Error> {
+    let bytes = bs58::decode(encoded)
+        .into_vec()
+        .map_err(|_| Error::Other("invalid_exact_svm_payload_memo_mismatch".to_string()))?;
+    String::from_utf8(bytes)
+        .map_err(|_| Error::Other("invalid_exact_svm_payload_memo_mismatch".to_string()))
+}
+
 fn expected_memo(requirements: &PaymentRequirements) -> Option<&str> {
     requirements
         .extra
@@ -387,6 +495,39 @@ mod tests {
             },
             block_time: None,
         }
+    }
+
+    fn tx_with_parsed_memos(memos: &[&str]) -> EncodedConfirmedTransactionWithStatusMeta {
+        let mut tx = tx_with_meta(None);
+        let instructions = memos
+            .iter()
+            .map(|memo| {
+                serde_json::json!({
+                    "program": "spl-memo",
+                    "programId": programs::MEMO_PROGRAM,
+                    "parsed": memo,
+                    "stackHeight": null
+                })
+            })
+            .collect::<Vec<_>>();
+        tx.transaction.transaction = EncodedTransaction::Json(
+            serde_json::from_value(serde_json::json!({
+                "signatures": ["sig"],
+                "message": {
+                    "accountKeys": [{
+                        "pubkey": programs::MEMO_PROGRAM,
+                        "writable": false,
+                        "signer": false,
+                        "source": null
+                    }],
+                    "recentBlockhash": "blockhash",
+                    "instructions": instructions,
+                    "addressTableLookups": null
+                }
+            }))
+            .unwrap(),
+        );
+        tx
     }
 
     fn compute_limit_ix() -> Instruction {
@@ -537,6 +678,45 @@ mod tests {
         let tx = tx_with_meta(None);
         let err = verify_transaction_details(&tx, &requirements("abc")).unwrap_err();
         assert!(matches!(err, Error::Other(_)));
+    }
+
+    #[test]
+    fn verify_transaction_details_enforces_expected_memo() {
+        let mut requirements = requirements("1000");
+        requirements.extra = Some(serde_json::json!({ "memo": "deadbeef" }));
+        let tx = tx_with_parsed_memos(&["deadbeef"]);
+
+        assert!(verify_transaction_details(&tx, &requirements).is_ok());
+
+        requirements.extra = Some(serde_json::json!({ "memo": "expected" }));
+        let err = verify_transaction_details(&tx, &requirements).unwrap_err();
+        assert!(
+            matches!(err, Error::Other(reason) if reason == "invalid_exact_svm_payload_memo_mismatch")
+        );
+    }
+
+    #[test]
+    fn verify_transaction_details_rejects_missing_expected_memo() {
+        let mut requirements = requirements("1000");
+        requirements.extra = Some(serde_json::json!({ "memo": "required" }));
+        let tx = tx_with_parsed_memos(&[]);
+
+        let err = verify_transaction_details(&tx, &requirements).unwrap_err();
+        assert!(
+            matches!(err, Error::Other(reason) if reason == "invalid_exact_svm_payload_memo_count")
+        );
+    }
+
+    #[test]
+    fn verify_transaction_details_rejects_multiple_expected_memos() {
+        let mut requirements = requirements("1000");
+        requirements.extra = Some(serde_json::json!({ "memo": "deadbeef" }));
+        let tx = tx_with_parsed_memos(&["deadbeef", "deadbeef"]);
+
+        let err = verify_transaction_details(&tx, &requirements).unwrap_err();
+        assert!(
+            matches!(err, Error::Other(reason) if reason == "invalid_exact_svm_payload_memo_count")
+        );
     }
 
     #[test]
