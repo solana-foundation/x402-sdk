@@ -168,6 +168,22 @@ fn encode_payment_envelope(envelope: &PaymentSignatureEnvelope) -> Result<String
     ))
 }
 
+/// Client-side preferences used when picking one offer from a server's
+/// `accepts` list. Mirrors the MPP TS `SelectSolanaChargeChallengeOptions`.
+#[derive(Debug, Clone, Default)]
+pub struct ChallengeSelection<'a> {
+    /// Solana network the client wants to pay on (cluster slug or CAIP-2).
+    /// `None` defaults to mainnet.
+    pub network: Option<&'a str>,
+    /// Priority-ordered list of currencies the client is willing to pay in.
+    /// Entries can be stablecoin symbols (`"USDC"`) or mint addresses; both
+    /// resolve through `resolve_stablecoin_mint` so symbol/address are
+    /// interchangeable. The first server offer matching the highest-priority
+    /// currency wins. `None` falls back to "cheapest amount on the preferred
+    /// network".
+    pub currencies: Option<&'a [&'a str]>,
+}
+
 /// Parse an x402 challenge from response headers and/or body.
 ///
 /// Checks for:
@@ -179,7 +195,7 @@ pub fn parse_x402_challenge(
     headers: &[(String, String)],
     body: Option<&str>,
 ) -> Option<PaymentRequirements> {
-    parse_x402_challenge_for_network(headers, body, None)
+    parse_x402_challenge_with_selection(headers, body, &ChallengeSelection::default())
 }
 
 /// Parse an x402 challenge, preferring a specific SVM network.
@@ -188,11 +204,31 @@ pub fn parse_x402_challenge_for_network(
     body: Option<&str>,
     preferred_network: Option<&str>,
 ) -> Option<PaymentRequirements> {
+    parse_x402_challenge_with_selection(
+        headers,
+        body,
+        &ChallengeSelection {
+            network: preferred_network,
+            currencies: None,
+        },
+    )
+}
+
+/// Parse an x402 challenge with full client-side selection preferences.
+///
+/// When `selection.currencies` is set, the first offer matching the
+/// highest-priority currency is returned. When `None`, falls back to
+/// cheapest-by-amount on the preferred network.
+pub fn parse_x402_challenge_with_selection(
+    headers: &[(String, String)],
+    body: Option<&str>,
+    selection: &ChallengeSelection<'_>,
+) -> Option<PaymentRequirements> {
     if let Some(header) = headers
         .iter()
         .find(|(k, _)| k.eq_ignore_ascii_case(PAYMENT_REQUIRED_HEADER))
     {
-        if let Some(req) = parse_payment_required_header(&header.1, preferred_network) {
+        if let Some(req) = parse_payment_required_header(&header.1, selection) {
             return Some(req);
         }
     }
@@ -207,7 +243,7 @@ pub fn parse_x402_challenge_for_network(
     }
 
     if let Some(body) = body {
-        if let Some(req) = parse_accepts_body(body, preferred_network) {
+        if let Some(req) = parse_accepts_body(body, selection) {
             return Some(req);
         }
     }
@@ -217,7 +253,7 @@ pub fn parse_x402_challenge_for_network(
 
 fn parse_payment_required_header(
     header: &str,
-    preferred_network: Option<&str>,
+    selection: &ChallengeSelection<'_>,
 ) -> Option<PaymentRequirements> {
     let decoded =
         base64::Engine::decode(&base64::engine::general_purpose::STANDARD, header).ok()?;
@@ -225,22 +261,26 @@ fn parse_payment_required_header(
         serde_json::from_slice::<PaymentRequiredEnvelope>(&decoded)
             .ok()?
             .with_resource_on_accepts();
-    select_requirement(envelope.accepts, preferred_network)
+    select_requirement(envelope.accepts, selection)
 }
 
 /// Parse the x402-express body `{ "accepts": [...] }` into `PaymentRequirements`.
-fn parse_accepts_body(body: &str, preferred_network: Option<&str>) -> Option<PaymentRequirements> {
+fn parse_accepts_body(
+    body: &str,
+    selection: &ChallengeSelection<'_>,
+) -> Option<PaymentRequirements> {
     let envelope: PaymentRequiredEnvelope = serde_json::from_str::<PaymentRequiredEnvelope>(body)
         .ok()?
         .with_resource_on_accepts();
-    select_requirement(envelope.accepts, preferred_network)
+    select_requirement(envelope.accepts, selection)
 }
 
 fn select_requirement(
     accepts: Vec<PaymentRequirements>,
-    preferred_network: Option<&str>,
+    selection: &ChallengeSelection<'_>,
 ) -> Option<PaymentRequirements> {
-    let preferred = preferred_network
+    let preferred_network = selection
+        .network
         .map(caip2_network_for_cluster)
         .unwrap_or(SOLANA_MAINNET);
 
@@ -263,12 +303,45 @@ fn select_requirement(
         .filter(|requirement| cluster_for_caip2_network(&requirement.network).is_some())
         .collect();
 
-    solana_accepts
+    let on_preferred_network: Vec<&PaymentRequirements> = solana_accepts
         .iter()
-        .filter(|requirement| network_matches(requirement, preferred))
+        .filter(|requirement| network_matches(requirement, preferred_network))
+        .collect();
+
+    // Currency-preference path: iterate the client's accepted currencies in
+    // priority order, returning the first server offer that matches.
+    // Symbols and mint addresses are interchangeable — both resolve through
+    // `resolve_stablecoin_mint`.
+    if let Some(currencies) = selection.currencies {
+        for accepted_currency in currencies {
+            if let Some(matched) = on_preferred_network
+                .iter()
+                .find(|requirement| currencies_match(&requirement.currency, accepted_currency, requirement.cluster.as_deref()))
+            {
+                return Some((*matched).clone());
+            }
+        }
+        // No accepted-currency match on the preferred network. Don't fall
+        // back to cheapest — the client explicitly listed currencies it's
+        // willing to pay; offering them anything else would be wrong.
+        return None;
+    }
+
+    // No currency preference: pick cheapest on preferred network, falling
+    // back to overall cheapest if the preferred network has no offers.
+    on_preferred_network
+        .into_iter()
         .min_by_key(|requirement| amount(requirement))
         .cloned()
         .or_else(|| solana_accepts.into_iter().min_by_key(amount))
+}
+
+/// Currency equivalence: `accepted` (client's preference, symbol or mint)
+/// resolves to the same on-chain mint as `offered` (server's offer).
+fn currencies_match(offered: &str, accepted: &str, cluster: Option<&str>) -> bool {
+    let offered_mint = resolve_stablecoin_mint(offered, cluster).unwrap_or(offered);
+    let accepted_mint = resolve_stablecoin_mint(accepted, cluster).unwrap_or(accepted);
+    offered_mint == accepted_mint
 }
 
 fn memo_instruction(requirements: &PaymentRequirements) -> Result<Instruction, Error> {
@@ -484,7 +557,7 @@ mod tests {
             recipient: Pubkey::new_unique().to_string(),
             amount: "1000".to_string(),
             currency: currency.to_string(),
-            decimals: if currency.eq_ignore_ascii_case("SOL") {
+            decimals: if crate::protocol::schemes::exact::is_native_sol(currency) {
                 None
             } else {
                 Some(6)
@@ -543,7 +616,7 @@ mod tests {
         })
         .to_string();
 
-        let req = parse_accepts_body(&body, None).unwrap();
+        let req = parse_accepts_body(&body, &ChallengeSelection::default()).unwrap();
         assert_eq!(req.amount, "1000");
         assert_eq!(
             req.recipient,
@@ -564,7 +637,111 @@ mod tests {
     #[test]
     fn parse_x402_express_body_no_solana() {
         let body = r#"{ "accepts": [{ "network": "foo:bar" }] }"#;
-        assert!(parse_accepts_body(body, None).is_none());
+        assert!(parse_accepts_body(body, &ChallengeSelection::default()).is_none());
+    }
+
+    // ── Client-side selection ──────────────────────────────────────────────
+
+    fn multi_currency_body() -> String {
+        // Server offers USDC and PYUSD on devnet, plus a SOL fallback.
+        serde_json::json!({
+            X402_VERSION_FIELD: X402_VERSION_V2,
+            "accepts": [
+                {
+                    "scheme": EXACT_SCHEME,
+                    "network": SOLANA_DEVNET,
+                    "amount": "1000000",
+                    "asset": mints::USDC_DEVNET,
+                    "payTo": "CXhrFZJLKqjzmP3sjYLcF4dTeXWKCy9e2SXXZ2Yo6MPY",
+                    "maxTimeoutSeconds": 60,
+                    "extra": { "decimals": 6 }
+                },
+                {
+                    "scheme": EXACT_SCHEME,
+                    "network": SOLANA_DEVNET,
+                    "amount": "1000000",
+                    "asset": mints::PYUSD_DEVNET,
+                    "payTo": "CXhrFZJLKqjzmP3sjYLcF4dTeXWKCy9e2SXXZ2Yo6MPY",
+                    "maxTimeoutSeconds": 60,
+                    "extra": { "decimals": 6 }
+                },
+                {
+                    "scheme": EXACT_SCHEME,
+                    "network": SOLANA_DEVNET,
+                    "amount": "5000",
+                    "asset": "SOL",
+                    "payTo": "CXhrFZJLKqjzmP3sjYLcF4dTeXWKCy9e2SXXZ2Yo6MPY",
+                    "maxTimeoutSeconds": 60
+                }
+            ]
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn select_picks_first_in_preferred_currency_order() {
+        // Client's first choice is PYUSD; the offer list contains both USDC
+        // and PYUSD. The client must get PYUSD even though USDC is listed
+        // first by the server.
+        let body = multi_currency_body();
+        let selection = ChallengeSelection {
+            network: Some("devnet"),
+            currencies: Some(&["PYUSD", "USDC"]),
+        };
+        let req = parse_x402_challenge_with_selection(&[], Some(&body), &selection).unwrap();
+        assert_eq!(req.currency, mints::PYUSD_DEVNET);
+    }
+
+    #[test]
+    fn select_falls_back_to_second_choice_when_first_unavailable() {
+        // Client wants USDT first, then USDC. Server doesn't offer USDT.
+        let body = multi_currency_body();
+        let selection = ChallengeSelection {
+            network: Some("devnet"),
+            currencies: Some(&["USDT", "USDC"]),
+        };
+        let req = parse_x402_challenge_with_selection(&[], Some(&body), &selection).unwrap();
+        assert_eq!(req.currency, mints::USDC_DEVNET);
+    }
+
+    #[test]
+    fn select_returns_none_when_no_currency_matches_client_list() {
+        // Client only accepts USDT; server offers USDC, PYUSD, SOL. No
+        // match → return None (don't fall back to something the client
+        // didn't list).
+        let body = multi_currency_body();
+        let selection = ChallengeSelection {
+            network: Some("devnet"),
+            currencies: Some(&["USDT"]),
+        };
+        assert!(parse_x402_challenge_with_selection(&[], Some(&body), &selection).is_none());
+    }
+
+    #[test]
+    fn select_accepts_mint_addresses_as_currency_keys() {
+        // Client passes the on-chain mint address instead of the symbol.
+        // `currencies_match` should resolve both sides and accept the offer.
+        let body = multi_currency_body();
+        let selection = ChallengeSelection {
+            network: Some("devnet"),
+            currencies: Some(&[mints::USDC_DEVNET]),
+        };
+        let req = parse_x402_challenge_with_selection(&[], Some(&body), &selection).unwrap();
+        assert_eq!(req.currency, mints::USDC_DEVNET);
+    }
+
+    #[test]
+    fn select_no_preference_picks_cheapest() {
+        // Backward-compat: when no currency preference is given, pick the
+        // cheapest by amount on the preferred network. SOL costs 5000 base
+        // units in the fixture, the stablecoins cost 1_000_000 — SOL wins.
+        let body = multi_currency_body();
+        let selection = ChallengeSelection {
+            network: Some("devnet"),
+            currencies: None,
+        };
+        let req = parse_x402_challenge_with_selection(&[], Some(&body), &selection).unwrap();
+        assert_eq!(req.currency, "SOL");
     }
 
     #[test]
@@ -732,7 +909,7 @@ mod tests {
 
     #[test]
     fn parse_invalid_returns_none() {
-        assert!(parse_accepts_body("not json", None).is_none());
+        assert!(parse_accepts_body("not json", &ChallengeSelection::default()).is_none());
         assert!(parse_x402_challenge(&[], None).is_none());
         assert!(parse_x402_challenge(&[], Some("garbage")).is_none());
     }

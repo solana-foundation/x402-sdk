@@ -135,6 +135,10 @@ describe("@x402/svm", () => {
       expect(getStablecoinTokenProgram("CASH", SOLANA_MAINNET_CAIP2)).toBe(
         TOKEN_2022_PROGRAM_ADDRESS,
       );
+      expect(getStablecoinSymbol("not-a-stablecoin")).toBeUndefined();
+      expect(getStablecoinTokenProgram("not-a-stablecoin", SOLANA_DEVNET_CAIP2)).toBe(
+        TOKEN_PROGRAM_ADDRESS,
+      );
     });
 
     it("should return PYUSD addresses", () => {

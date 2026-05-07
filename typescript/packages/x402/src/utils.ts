@@ -289,7 +289,7 @@ export function getStablecoinSymbol(currency: string): keyof typeof STABLECOIN_M
   }
 
   for (const [symbol, mintByNetwork] of Object.entries(STABLECOIN_MINTS)) {
-    if (Object.values(mintByNetwork).includes(currency)) {
+    if (Object.values(mintByNetwork).some(mint => mint === currency)) {
       return symbol as keyof typeof STABLECOIN_MINTS;
     }
   }

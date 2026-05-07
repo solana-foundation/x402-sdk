@@ -15,7 +15,7 @@ use solana_signature::Signature;
 use solana_transaction::versioned::VersionedTransaction;
 use solana_x402::{
     protocol::schemes::exact::{PaymentRequiredEnvelope, PaymentRequirements},
-    server::{Config, ExactOptions, VerifiedExactPayment, X402},
+    server::{exact::PaymentOption, Config, ExactOptions, VerifiedExactPayment, X402},
     PAYMENT_REQUIRED_HEADER, PAYMENT_RESPONSE_HEADER, PAYMENT_SIGNATURE_HEADER, X402_VERSION_V2,
 };
 
@@ -34,6 +34,10 @@ struct InteropState {
     price: String,
     resource_path: String,
     settlement_header: String,
+    /// Additional currencies (beyond `Config.currency`) this server offers
+    /// for the same route. Populated from `X402_INTEROP_EXTRA_OFFERED_MINTS`
+    /// (comma-separated mint addresses). Empty for single-currency runs.
+    extra_offered_mints: Vec<String>,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -83,6 +87,26 @@ fn read_state() -> Result<InteropState, Box<dyn std::error::Error + Send + Sync>
         &env::var("X402_INTEROP_PRICE").unwrap_or_else(|_| DEFAULT_PRICE.to_string()),
     )?;
 
+    let extra_offered_mints: Vec<String> = env::var("X402_INTEROP_EXTRA_OFFERED_MINTS")
+        .ok()
+        .map(|raw| {
+            raw.split(',')
+                .map(|entry| entry.trim().to_string())
+                .filter(|entry| !entry.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // When extra mints are advertised, expand `accepted_currencies` so the
+    // Tier-2 backstop allows any of them.
+    let accepted_currencies = if extra_offered_mints.is_empty() {
+        None
+    } else {
+        let mut all = vec![mint.clone()];
+        all.extend(extra_offered_mints.iter().cloned());
+        Some(all)
+    };
+
     Ok(InteropState {
         x402: X402::new(Config {
             recipient: pay_to,
@@ -94,13 +118,62 @@ fn read_state() -> Result<InteropState, Box<dyn std::error::Error + Send + Sync>
             description: Some("Surfpool-backed protected content".to_string()),
             max_age: Some(60),
             token_program: Some(TOKEN_PROGRAM.to_string()),
+            accepted_currencies,
+            fee_payer_key: Some(fee_payer.pubkey().to_string()),
         })?,
         rpc_url,
         fee_payer,
         price,
         resource_path: DEFAULT_RESOURCE_PATH.to_string(),
         settlement_header: DEFAULT_SETTLEMENT_HEADER.to_string(),
+        extra_offered_mints,
     })
+}
+
+/// Build the full list of payment options this server advertises. The
+/// primary currency comes from `Config.currency`; any additional mints in
+/// `X402_INTEROP_EXTRA_OFFERED_MINTS` are appended.
+fn payment_options(state: &InteropState) -> Vec<PaymentOption<'static>> {
+    // SAFETY: the strings live as long as the leaked allocation does. We
+    // leak intentionally because adapter binaries are short-lived and the
+    // allocations need 'static lifetimes for `PaymentOption<'static>`.
+    let primary_currency: &'static str = Box::leak(state.x402.currency().to_string().into_boxed_str());
+    let price: &'static str = Box::leak(state.price.clone().into_boxed_str());
+    let resource_path: &'static str =
+        Box::leak(state.resource_path.clone().into_boxed_str());
+
+    let extras: Vec<PaymentOption<'static>> = state
+        .extra_offered_mints
+        .iter()
+        .map(|mint| {
+            let mint_static: &'static str = Box::leak(mint.clone().into_boxed_str());
+            PaymentOption {
+                amount: price,
+                currency: Some(mint_static),
+                decimals: Some(TOKEN_DECIMALS),
+                token_program: None, // resolved via stablecoin lookup
+                extra: ExactOptions {
+                    description: Some("Surfpool-backed protected content"),
+                    resource: Some(resource_path),
+                    max_age: Some(60),
+                },
+            }
+        })
+        .collect();
+
+    let mut options = vec![PaymentOption {
+        amount: price,
+        currency: Some(primary_currency),
+        decimals: Some(TOKEN_DECIMALS),
+        token_program: Some(TOKEN_PROGRAM),
+        extra: ExactOptions {
+            description: Some("Surfpool-backed protected content"),
+            resource: Some(resource_path),
+            max_age: Some(60),
+        },
+    }];
+    options.extend(extras);
+    options
 }
 
 fn handle_connection(
@@ -137,15 +210,17 @@ fn handle_connection(
     match (method, path) {
         ("GET", HEALTH_PATH) => write_json_response(&mut stream, 200, &[], &json!({ "ok": true }))?,
         ("GET", path) if path == state.resource_path => {
-            let requirements = payment_requirements(state)?;
+            let offered = payment_options(state);
+            let requirements_list = build_offered_requirements(state, &offered)?;
+            let primary_network = requirements_list[0].network.clone();
             if let Some(payment_header) =
                 headers.get(&PAYMENT_SIGNATURE_HEADER.to_ascii_lowercase())
             {
-                match settle_payment(state, runtime, payment_header, &requirements) {
+                match settle_payment(state, runtime, payment_header, &offered) {
                     Ok(settlement) => {
                         let payment_response = serde_json::to_string(&json!({
                             "success": true,
-                            "network": requirements.network,
+                            "network": primary_network,
                             "transaction": settlement,
                         }))?;
                         write_json_response(
@@ -161,13 +236,14 @@ fn handle_connection(
                                 "settlement": {
                                     "success": true,
                                     "transaction": settlement,
-                                    "network": requirements.network,
+                                    "network": primary_network,
                                 }
                             }),
                         )?;
                     }
                     Err(error) => {
-                        let (_, header_value) = payment_required_header_for(&requirements)?;
+                        let (_, header_value) =
+                            payment_required_header_for(&requirements_list)?;
                         write_json_response(
                             &mut stream,
                             402,
@@ -180,7 +256,7 @@ fn handle_connection(
                     }
                 }
             } else {
-                let (_, header_value) = payment_required_header_for(&requirements)?;
+                let (_, header_value) = payment_required_header_for(&requirements_list)?;
                 write_json_response(
                     &mut stream,
                     402,
@@ -195,29 +271,32 @@ fn handle_connection(
     Ok(())
 }
 
-fn payment_requirements(
+/// Build the freshly-enriched `PaymentRequirements` for each offered option.
+/// `Config.fee_payer_key` makes `exact_requirements_for_option` set the
+/// `fee_payer` fields automatically — same value at 402-time and verify-time
+/// so the deepEqual binding match is stable.
+fn build_offered_requirements(
     state: &InteropState,
-) -> Result<PaymentRequirements, Box<dyn std::error::Error + Send + Sync>> {
-    let mut requirements = state.x402.exact_requirements(
-        &state.price,
-        ExactOptions {
-            description: Some("Surfpool-backed protected content"),
-            resource: Some(&state.resource_path),
-            max_age: Some(60),
-        },
-    )?;
-    requirements.fee_payer = Some(true);
-    requirements.fee_payer_key = Some(state.fee_payer.pubkey().to_string());
-    Ok(requirements)
+    offered: &[PaymentOption<'_>],
+) -> Result<Vec<PaymentRequirements>, Box<dyn std::error::Error + Send + Sync>> {
+    offered
+        .iter()
+        .map(|option| {
+            state
+                .x402
+                .exact_requirements_for_option(option)
+                .map_err(|err| -> Box<dyn std::error::Error + Send + Sync> { Box::new(err) })
+        })
+        .collect()
 }
 
 fn payment_required_header_for(
-    requirements: &PaymentRequirements,
+    requirements: &[PaymentRequirements],
 ) -> Result<(String, String), Box<dyn std::error::Error + Send + Sync>> {
     let envelope = PaymentRequiredEnvelope {
         x402_version: X402_VERSION_V2,
-        resource: requirements.resource_info(),
-        accepts: vec![requirements.clone()],
+        resource: requirements.first().and_then(|r| r.resource_info()),
+        accepts: requirements.to_vec(),
         error: None,
         extensions: None,
     };
@@ -232,12 +311,12 @@ fn settle_payment(
     state: &InteropState,
     runtime: &tokio::runtime::Runtime,
     payment_header: &str,
-    requirements: &PaymentRequirements,
+    offered: &[PaymentOption<'_>],
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let verified = runtime.block_on(
         state
             .x402
-            .verify_payment_signature_for_requirements(payment_header, requirements),
+            .process_payment_with_options(payment_header, offered),
     )?;
 
     match verified {

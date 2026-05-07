@@ -26,9 +26,14 @@ async function canBindLocalSocket(): Promise<boolean> {
   });
 }
 
-async function getTokenBalance(surfnet: Surfnet, owner: string, mint: string): Promise<bigint> {
+async function getTokenBalance(
+  surfnet: Surfnet,
+  owner: string,
+  mint: string,
+  tokenProgram?: string,
+): Promise<bigint> {
   const rpc = createSolanaRpc(surfnet.rpcUrl);
-  const ata = surfnet.getAta(owner, mint);
+  const ata = surfnet.getAta(owner, mint, tokenProgram);
   const response = await rpc.getTokenAccountBalance(ata as never).send();
   return BigInt(response.value.amount);
 }
@@ -118,6 +123,135 @@ describe("x402 interop", () => {
         expect(result.settlement).not.toHaveLength(0);
         expect(finalBalance - initialBalance).toBe(1_000n);
       });
+    }
+  }
+});
+
+// ── Multi-currency vectors ────────────────────────────────────────────────
+//
+// The server advertises both USDC (primary, via X402_INTEROP_MINT) and
+// PYUSD (additional, via X402_INTEROP_EXTRA_OFFERED_MINTS). The client
+// picks one via X402_INTEROP_PREFER_CURRENCIES (priority-ordered). The
+// canonical x402 TS resource server already supports multi-currency via
+// `accepts: PaymentOption[]` and the canonical client supports a custom
+// `paymentRequirementsSelector` — both adapters honor the same env vars.
+
+const TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+const PYUSD_DEVNET_MINT = "CXk2AMBfi3TwaEL2468s6zP8xq9NxTXjp9gjMgzeUynM";
+
+describe("x402 interop multi-currency", () => {
+  const socketAwareIt = socketSupport ? it : it.skip;
+  const activeServers = serverImplementations.filter(implementation => implementation.enabled);
+  const activeClients = clientImplementations.filter(implementation => implementation.enabled);
+
+  async function setupPyusdMint(): Promise<string> {
+    if (!surfnet || !interopEnv) {
+      throw new Error("Surfpool interop environment was not initialized");
+    }
+    // PYUSD on devnet uses Token-2022. The 4th `fundToken` arg pins the
+    // owning token program for the ATA — without it Surfnet defaults to
+    // legacy SPL Token, and `transferChecked` fails with InvalidAccountData.
+    surfnet.setAccount(
+      PYUSD_DEVNET_MINT,
+      1_461_600,
+      createSplMintAccountData(6),
+      TOKEN_2022_PROGRAM,
+    );
+    surfnet.fundToken(
+      interopEnv.X402_INTEROP_PAY_TO,
+      PYUSD_DEVNET_MINT,
+      1,
+      TOKEN_2022_PROGRAM,
+    );
+    const secretBytes = new Uint8Array(JSON.parse(interopEnv.X402_INTEROP_CLIENT_SECRET_KEY));
+    const { getAddressFromPublicKey, createKeyPairFromBytes } = await import("@solana/kit");
+    const kp = await createKeyPairFromBytes(secretBytes);
+    const clientAddress = await getAddressFromPublicKey(kp.publicKey);
+    surfnet.fundToken(clientAddress, PYUSD_DEVNET_MINT, 100_000, TOKEN_2022_PROGRAM);
+    return clientAddress;
+  }
+
+  for (const serverImplementation of activeServers) {
+    for (const clientImplementation of activeClients) {
+      socketAwareIt(
+        `${clientImplementation.id} client picks PYUSD from ${serverImplementation.id} server offering USDC + PYUSD`,
+        async () => {
+          if (!surfnet || !interopEnv) {
+            throw new Error("Surfpool interop environment was not initialized");
+          }
+          await setupPyusdMint();
+
+          const initialPyusdBalance = await getTokenBalance(
+            surfnet,
+            interopEnv.X402_INTEROP_PAY_TO,
+            PYUSD_DEVNET_MINT,
+            TOKEN_2022_PROGRAM,
+          );
+
+          const multiEnv = {
+            ...interopEnv,
+            X402_INTEROP_EXTRA_OFFERED_MINTS: PYUSD_DEVNET_MINT,
+          };
+          const server = await startServer(serverImplementation, multiEnv);
+          runningServers.push(server);
+
+          const targetUrl = `http://127.0.0.1:${server.ready.port}${interopScenario.resourcePath}`;
+          const result = await runClient(clientImplementation, targetUrl, {
+            ...multiEnv,
+            X402_INTEROP_PREFER_CURRENCIES: "PYUSD,USDC",
+          });
+
+          const finalPyusdBalance = await getTokenBalance(
+            surfnet,
+            interopEnv.X402_INTEROP_PAY_TO,
+            PYUSD_DEVNET_MINT,
+            TOKEN_2022_PROGRAM,
+          );
+
+          expect(result.ok, JSON.stringify(result, null, 2)).toBe(true);
+          expect(result.status).toBe(200);
+          expect(finalPyusdBalance - initialPyusdBalance).toBe(1_000n);
+        },
+        20_000,
+      );
+
+      socketAwareIt(
+        `${clientImplementation.id} client falls back to USDC when PYUSD is not in its preference list (${serverImplementation.id} server)`,
+        async () => {
+          if (!surfnet || !interopEnv) {
+            throw new Error("Surfpool interop environment was not initialized");
+          }
+
+          const initialUsdcBalance = await getTokenBalance(
+            surfnet,
+            interopEnv.X402_INTEROP_PAY_TO,
+            interopEnv.X402_INTEROP_MINT,
+          );
+
+          const multiEnv = {
+            ...interopEnv,
+            X402_INTEROP_EXTRA_OFFERED_MINTS: PYUSD_DEVNET_MINT,
+          };
+          const server = await startServer(serverImplementation, multiEnv);
+          runningServers.push(server);
+
+          const targetUrl = `http://127.0.0.1:${server.ready.port}${interopScenario.resourcePath}`;
+          const result = await runClient(clientImplementation, targetUrl, {
+            ...multiEnv,
+            X402_INTEROP_PREFER_CURRENCIES: "USDC",
+          });
+
+          const finalUsdcBalance = await getTokenBalance(
+            surfnet,
+            interopEnv.X402_INTEROP_PAY_TO,
+            interopEnv.X402_INTEROP_MINT,
+          );
+
+          expect(result.ok, JSON.stringify(result, null, 2)).toBe(true);
+          expect(finalUsdcBalance - initialUsdcBalance).toBe(1_000n);
+        },
+        20_000,
+      );
     }
   }
 });

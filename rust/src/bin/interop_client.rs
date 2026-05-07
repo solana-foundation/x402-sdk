@@ -4,7 +4,7 @@ use serde_json::json;
 use solana_keychain::memory::MemorySigner;
 use solana_rpc_client::rpc_client::RpcClient;
 use solana_x402::{
-    client::exact::{build_payment_header, parse_x402_challenge_for_network},
+    client::exact::{build_payment_header, parse_x402_challenge_with_selection, ChallengeSelection},
     PAYMENT_SIGNATURE_HEADER,
 };
 
@@ -18,13 +18,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let network = env::var("X402_INTEROP_NETWORK").unwrap_or_else(|_| DEFAULT_NETWORK.to_string());
     let signer = read_memory_signer("X402_INTEROP_CLIENT_SECRET_KEY")?;
 
+    // For multi-currency interop, the harness passes
+    //   X402_INTEROP_PREFER_CURRENCIES = "PYUSD,USDC"
+    // to communicate the client's currency preference order. With no env
+    // var set the client falls back to "cheapest amount on preferred
+    // network" — same as before.
+    let preferred_currencies: Option<Vec<String>> =
+        env::var("X402_INTEROP_PREFER_CURRENCIES").ok().map(|raw| {
+            raw.split(',')
+                .map(|entry| entry.trim().to_string())
+                .filter(|entry| !entry.is_empty())
+                .collect()
+        });
+
     let http = reqwest::Client::new();
     let first_response = http.get(&target_url).send().await?;
     let first_headers = response_headers(first_response.headers())?;
     let first_body = first_response.text().await?;
-    let requirements =
-        parse_x402_challenge_for_network(&first_headers, Some(&first_body), Some(&network))
-            .ok_or_else(|| "server did not return a supported SVM x402 challenge".to_string())?;
+    let preferred_refs: Option<Vec<&str>> = preferred_currencies
+        .as_ref()
+        .map(|list| list.iter().map(String::as_str).collect());
+    let selection = ChallengeSelection {
+        network: Some(&network),
+        currencies: preferred_refs.as_deref(),
+    };
+    let requirements = parse_x402_challenge_with_selection(
+        &first_headers,
+        Some(&first_body),
+        &selection,
+    )
+    .ok_or_else(|| "server did not return a supported SVM x402 challenge".to_string())?;
 
     let rpc = RpcClient::new(rpc_url);
     let payment_header = build_payment_header(&signer, &rpc, &requirements).await?;

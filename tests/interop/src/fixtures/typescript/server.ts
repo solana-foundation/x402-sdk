@@ -81,14 +81,37 @@ async function main() {
   );
   await resourceServer.initialize();
 
+  // Multi-currency: when `X402_INTEROP_EXTRA_OFFERED_MINTS` is set, the
+  // server advertises additional payment options alongside the primary
+  // currency. Canonical x402's `accepts: PaymentOption[]` shape handles
+  // this directly — the resource server builds a requirement for each.
+  const extraOfferedMints = (process.env.X402_INTEROP_EXTRA_OFFERED_MINTS ?? "")
+    .split(",")
+    .map(entry => entry.trim())
+    .filter(Boolean);
+  const acceptsList: Array<{
+    scheme: string;
+    network: never;
+    payTo: string;
+    price: string | { amount: string; asset: string; extra?: { decimals: number } };
+  }> = [
+    {
+      scheme: interopScenario.scheme,
+      network: environment.network as never,
+      payTo: environment.payTo,
+      price: interopScenario.price,
+    },
+    ...extraOfferedMints.map(mint => ({
+      scheme: interopScenario.scheme,
+      network: environment.network as never,
+      payTo: environment.payTo,
+      price: { amount: "1000", asset: mint, extra: { decimals: 6 } },
+    })),
+  ];
+
   const httpServer = new x402HTTPResourceServer(resourceServer, {
     [`GET ${interopScenario.resourcePath}`]: {
-      accepts: {
-        scheme: interopScenario.scheme,
-        network: environment.network as never,
-        payTo: environment.payTo,
-        price: interopScenario.price,
-      },
+      accepts: acceptsList.length === 1 ? acceptsList[0] : acceptsList,
       description: "Surfpool-backed protected content",
       mimeType: "application/json",
       unpaidResponseBody: async () => ({

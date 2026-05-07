@@ -17,6 +17,12 @@ use crate::error::Error;
 const MAX_COMPUTE_UNIT_PRICE_MICROLAMPORTS: u64 = 5_000_000;
 
 /// Verify a confirmed transaction matches the expected payment requirements.
+///
+/// Looks at the on-chain transaction returned for a signature-mode credential
+/// and confirms it actually contains a `transferChecked` of the expected
+/// amount, mint, and destination ATA. Earlier versions of this function were
+/// a stub and accepted any successful Solana signature — that meant any
+/// confirmed transaction satisfied any route.
 pub fn verify_transaction_details(
     tx: &EncodedConfirmedTransactionWithStatusMeta,
     requirements: &PaymentRequirements,
@@ -28,14 +34,12 @@ pub fn verify_transaction_details(
         }
     }
 
-    let _total_amount: u64 = requirements
+    let expected_amount: u64 = requirements
         .amount
         .parse()
         .map_err(|_| Error::Other(format!("Invalid amount: {}", requirements.amount)))?;
 
-    // TODO: Parse jsonParsed instructions from the encoded transaction
-    // and verify SOL/SPL transfers match expected amounts and recipients.
-    let _ = &requirements.recipient;
+    verify_on_chain_transfer(tx, requirements, expected_amount)?;
 
     if let Some(expected_memo) = expected_memo(requirements) {
         let memo_instructions = transaction_memos(tx)?;
@@ -48,6 +52,145 @@ pub fn verify_transaction_details(
     }
 
     Ok(())
+}
+
+/// Find a `transferChecked` instruction matching the route's requirements in
+/// the encoded transaction's instruction list.
+///
+/// Handles both `JsonParsed` (returned by RPC under
+/// `UiTransactionEncoding::JsonParsed` for the SPL-token program) and `Raw`
+/// (compiled bytes). Returns `Ok(())` on first match, error if none.
+fn verify_on_chain_transfer(
+    tx: &EncodedConfirmedTransactionWithStatusMeta,
+    requirements: &PaymentRequirements,
+    expected_amount: u64,
+) -> Result<(), Error> {
+    let expected_mint = resolve_expected_mint(requirements);
+    let expected_recipient = Pubkey::from_str(&requirements.recipient)
+        .map_err(|e| Error::Other(format!("Invalid recipient: {e}")))?;
+    let expected_mint_pubkey = Pubkey::from_str(&expected_mint)
+        .map_err(|e| Error::Other(format!("Invalid mint: {e}")))?;
+    let token_program_str = requirements
+        .token_program
+        .clone()
+        .unwrap_or_else(|| programs::TOKEN_PROGRAM.to_string());
+    let token_program = Pubkey::from_str(&token_program_str)
+        .map_err(|e| Error::Other(format!("Invalid token program: {e}")))?;
+    let expected_destination =
+        get_associated_token_address(&expected_recipient, &expected_mint_pubkey, &token_program)
+            .to_string();
+    let expected_amount_str = expected_amount.to_string();
+
+    let ui_tx = match &tx.transaction.transaction {
+        EncodedTransaction::Json(ui_tx) => ui_tx,
+        _ => return invalid("invalid_exact_svm_payload_no_transfer_instruction"),
+    };
+
+    let matches = match &ui_tx.message {
+        UiMessage::Parsed(message) => message.instructions.iter().any(|instruction| {
+            matches_parsed_transfer(
+                instruction,
+                &expected_destination,
+                &expected_mint,
+                &expected_amount_str,
+            )
+        }),
+        UiMessage::Raw(message) => message.instructions.iter().any(|instruction| {
+            matches_raw_transfer(
+                instruction,
+                &message.account_keys,
+                &expected_destination,
+                &expected_mint,
+                expected_amount,
+            )
+        }),
+    };
+
+    if matches {
+        Ok(())
+    } else {
+        invalid("invalid_exact_svm_payload_no_transfer_instruction")
+    }
+}
+
+fn matches_parsed_transfer(
+    instruction: &UiInstruction,
+    expected_destination: &str,
+    expected_mint: &str,
+    expected_amount: &str,
+) -> bool {
+    let parsed = match instruction {
+        UiInstruction::Parsed(UiParsedInstruction::Parsed(parsed)) => parsed,
+        _ => return false,
+    };
+    if parsed.program_id != programs::TOKEN_PROGRAM
+        && parsed.program_id != programs::TOKEN_2022_PROGRAM
+    {
+        return false;
+    }
+    let parsed_obj = match parsed.parsed.as_object() {
+        Some(obj) => obj,
+        None => return false,
+    };
+    if parsed_obj.get("type").and_then(|v| v.as_str()) != Some("transferChecked") {
+        return false;
+    }
+    let info = match parsed_obj.get("info").and_then(|v| v.as_object()) {
+        Some(info) => info,
+        None => return false,
+    };
+    let destination = info.get("destination").and_then(|v| v.as_str()).unwrap_or("");
+    let mint = info.get("mint").and_then(|v| v.as_str()).unwrap_or("");
+    let amount = info
+        .get("tokenAmount")
+        .and_then(|v| v.as_object())
+        .and_then(|o| o.get("amount"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    destination == expected_destination && mint == expected_mint && amount == expected_amount
+}
+
+fn matches_raw_transfer(
+    instruction: &solana_transaction_status::UiCompiledInstruction,
+    account_keys: &[String],
+    expected_destination: &str,
+    expected_mint: &str,
+    expected_amount: u64,
+) -> bool {
+    let program = match account_keys.get(instruction.program_id_index as usize) {
+        Some(s) => s.as_str(),
+        None => return false,
+    };
+    if program != programs::TOKEN_PROGRAM && program != programs::TOKEN_2022_PROGRAM {
+        return false;
+    }
+    let bytes = match bs58::decode(&instruction.data).into_vec() {
+        Ok(b) => b,
+        Err(_) => return false,
+    };
+    // transferChecked: discriminator 12, then 8-byte u64 amount, then 1-byte decimals.
+    if bytes.len() != 10 || bytes[0] != 12 {
+        return false;
+    }
+    let amount_bytes: [u8; 8] = match bytes[1..9].try_into() {
+        Ok(b) => b,
+        Err(_) => return false,
+    };
+    if u64::from_le_bytes(amount_bytes) != expected_amount {
+        return false;
+    }
+    if instruction.accounts.len() < 4 {
+        return false;
+    }
+    let mint = match account_keys.get(instruction.accounts[1] as usize) {
+        Some(s) => s.as_str(),
+        None => return false,
+    };
+    let destination = match account_keys.get(instruction.accounts[2] as usize) {
+        Some(s) => s.as_str(),
+        None => return false,
+    };
+    mint == expected_mint && destination == expected_destination
 }
 
 /// Verify a signed `exact` transaction against Rust payment requirements.
@@ -497,29 +640,53 @@ mod tests {
         }
     }
 
-    fn tx_with_parsed_memos(memos: &[&str]) -> EncodedConfirmedTransactionWithStatusMeta {
+    /// Build an encoded transaction whose parsed instructions include a
+    /// `transferChecked` matching the requirements plus optional memos.
+    /// Mirrors the JsonParsed shape RPC returns when fetching a confirmed
+    /// SPL-token transfer.
+    fn tx_with_parsed_transfer_and_memos(
+        requirements: &PaymentRequirements,
+        memos: &[&str],
+    ) -> EncodedConfirmedTransactionWithStatusMeta {
         let mut tx = tx_with_meta(None);
-        let instructions = memos
-            .iter()
-            .map(|memo| {
-                serde_json::json!({
-                    "program": "spl-memo",
-                    "programId": programs::MEMO_PROGRAM,
-                    "parsed": memo,
-                    "stackHeight": null
-                })
-            })
-            .collect::<Vec<_>>();
+        let mint = Pubkey::from_str(&requirements.currency).unwrap();
+        let recipient = Pubkey::from_str(&requirements.recipient).unwrap();
+        let token_program =
+            Pubkey::from_str(requirements.token_program.as_deref().unwrap()).unwrap();
+        let destination = get_associated_token_address(&recipient, &mint, &token_program);
+
+        let mut instructions = vec![serde_json::json!({
+            "program": "spl-token",
+            "programId": programs::TOKEN_PROGRAM,
+            "parsed": {
+                "type": "transferChecked",
+                "info": {
+                    "destination": destination.to_string(),
+                    "mint": requirements.currency,
+                    "tokenAmount": {
+                        "amount": requirements.amount,
+                        "decimals": requirements.decimals.unwrap_or(6),
+                    },
+                },
+            },
+            "stackHeight": null
+        })];
+        for memo in memos {
+            instructions.push(serde_json::json!({
+                "program": "spl-memo",
+                "programId": programs::MEMO_PROGRAM,
+                "parsed": memo,
+                "stackHeight": null
+            }));
+        }
         tx.transaction.transaction = EncodedTransaction::Json(
             serde_json::from_value(serde_json::json!({
                 "signatures": ["sig"],
                 "message": {
-                    "accountKeys": [{
-                        "pubkey": programs::MEMO_PROGRAM,
-                        "writable": false,
-                        "signer": false,
-                        "source": null
-                    }],
+                    "accountKeys": [
+                        { "pubkey": programs::TOKEN_PROGRAM, "writable": false, "signer": false, "source": null },
+                        { "pubkey": programs::MEMO_PROGRAM, "writable": false, "signer": false, "source": null }
+                    ],
                     "recentBlockhash": "blockhash",
                     "instructions": instructions,
                     "addressTableLookups": null
@@ -655,36 +822,85 @@ mod tests {
 
     #[test]
     fn verify_transaction_details_accepts_nominal_meta() {
-        let tx = tx_with_meta(None);
-        assert!(verify_transaction_details(&tx, &requirements("1000")).is_ok());
+        let requirements = requirements("1000");
+        let tx = tx_with_parsed_transfer_and_memos(&requirements, &[]);
+        assert!(verify_transaction_details(&tx, &requirements).is_ok());
     }
 
     #[test]
     fn verify_transaction_details_accepts_missing_meta() {
-        let mut tx = tx_with_meta(None);
+        let requirements = requirements("1000");
+        let mut tx = tx_with_parsed_transfer_and_memos(&requirements, &[]);
         tx.transaction.meta = None;
-        assert!(verify_transaction_details(&tx, &requirements("1000")).is_ok());
+        assert!(verify_transaction_details(&tx, &requirements).is_ok());
     }
 
     #[test]
     fn verify_transaction_details_rejects_onchain_error() {
-        let tx = tx_with_meta(Some(TransactionError::AccountInUse));
-        let err = verify_transaction_details(&tx, &requirements("1000")).unwrap_err();
+        let requirements = requirements("1000");
+        let mut tx = tx_with_parsed_transfer_and_memos(&requirements, &[]);
+        if let Some(meta) = tx.transaction.meta.as_mut() {
+            meta.err = Some(TransactionError::AccountInUse.into());
+            meta.status = Err(TransactionError::AccountInUse.into());
+        }
+        let err = verify_transaction_details(&tx, &requirements).unwrap_err();
         assert!(matches!(err, Error::TransactionFailed(_)));
     }
 
     #[test]
     fn verify_transaction_details_rejects_invalid_amount() {
+        let requirements = requirements("abc");
         let tx = tx_with_meta(None);
-        let err = verify_transaction_details(&tx, &requirements("abc")).unwrap_err();
+        let err = verify_transaction_details(&tx, &requirements).unwrap_err();
         assert!(matches!(err, Error::Other(_)));
+    }
+
+    #[test]
+    fn verify_transaction_details_rejects_missing_transfer() {
+        // No transfer instruction in the tx — must reject. This is the
+        // direct regression test for the previous stub behavior.
+        let requirements = requirements("1000");
+        let tx = tx_with_meta(None);
+        let err = verify_transaction_details(&tx, &requirements).unwrap_err();
+        assert!(
+            matches!(err, Error::Other(ref reason) if reason == "invalid_exact_svm_payload_no_transfer_instruction"),
+            "got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn verify_transaction_details_rejects_wrong_amount_transfer() {
+        // The on-chain tx pays 999 but the requirements ask for 1000.
+        let requirements_route = requirements("1000");
+        let mut requirements_credential = requirements_route.clone();
+        requirements_credential.amount = "999".into();
+        let tx = tx_with_parsed_transfer_and_memos(&requirements_credential, &[]);
+        let err = verify_transaction_details(&tx, &requirements_route).unwrap_err();
+        assert!(
+            matches!(err, Error::Other(ref reason) if reason == "invalid_exact_svm_payload_no_transfer_instruction"),
+            "got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn verify_transaction_details_rejects_wrong_recipient_transfer() {
+        // The on-chain tx pays a different recipient.
+        let requirements_route = requirements("1000");
+        let mut requirements_credential = requirements_route.clone();
+        requirements_credential.recipient = Pubkey::new_unique().to_string();
+        let tx = tx_with_parsed_transfer_and_memos(&requirements_credential, &[]);
+        let err = verify_transaction_details(&tx, &requirements_route).unwrap_err();
+        assert!(
+            matches!(err, Error::Other(ref reason) if reason == "invalid_exact_svm_payload_no_transfer_instruction"),
+            "got: {err:?}"
+        );
     }
 
     #[test]
     fn verify_transaction_details_enforces_expected_memo() {
         let mut requirements = requirements("1000");
         requirements.extra = Some(serde_json::json!({ "memo": "deadbeef" }));
-        let tx = tx_with_parsed_memos(&["deadbeef"]);
+        let tx = tx_with_parsed_transfer_and_memos(&requirements, &["deadbeef"]);
 
         assert!(verify_transaction_details(&tx, &requirements).is_ok());
 
@@ -699,7 +915,7 @@ mod tests {
     fn verify_transaction_details_rejects_missing_expected_memo() {
         let mut requirements = requirements("1000");
         requirements.extra = Some(serde_json::json!({ "memo": "required" }));
-        let tx = tx_with_parsed_memos(&[]);
+        let tx = tx_with_parsed_transfer_and_memos(&requirements, &[]);
 
         let err = verify_transaction_details(&tx, &requirements).unwrap_err();
         assert!(
@@ -711,7 +927,7 @@ mod tests {
     fn verify_transaction_details_rejects_multiple_expected_memos() {
         let mut requirements = requirements("1000");
         requirements.extra = Some(serde_json::json!({ "memo": "deadbeef" }));
-        let tx = tx_with_parsed_memos(&["deadbeef", "deadbeef"]);
+        let tx = tx_with_parsed_transfer_and_memos(&requirements, &["deadbeef", "deadbeef"]);
 
         let err = verify_transaction_details(&tx, &requirements).unwrap_err();
         assert!(

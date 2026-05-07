@@ -78,12 +78,23 @@ pub mod mints {
     pub const CASH_MAINNET: &str = "CASHx9KJUStyftLFWGvEVf59SGeG9sh5FfcnZMVPCASH";
 }
 
+/// True if `currency` (symbol or mint address) represents native SOL.
+///
+/// Centralizes what was scattered as `currency.eq_ignore_ascii_case("SOL")`
+/// across the codebase. Use this anywhere you need to branch on the
+/// SOL-vs-SPL distinction.
+pub fn is_native_sol(currency: &str) -> bool {
+    currency.eq_ignore_ascii_case("SOL")
+}
+
 /// Resolve a stablecoin symbol to a mint address for a cluster.
 ///
 /// Returns `None` for native SOL and passes through unknown symbols/mints.
 pub fn resolve_stablecoin_mint<'a>(currency: &'a str, cluster: Option<&str>) -> Option<&'a str> {
+    if is_native_sol(currency) {
+        return None;
+    }
     match currency.to_uppercase().as_str() {
-        "SOL" => None,
         "USDC" => Some(match cluster {
             Some(SOLANA_DEVNET) | Some("devnet") | Some("localnet") => mints::USDC_DEVNET,
             Some(SOLANA_TESTNET) | Some("testnet") => mints::USDC_TESTNET,
@@ -105,22 +116,51 @@ pub fn resolve_stablecoin_mint<'a>(currency: &'a str, cluster: Option<&str>) -> 
     }
 }
 
+/// Reverse lookup: given a known mint address or stablecoin symbol, return
+/// the canonical symbol. Returns `None` for native SOL or unknown values.
+///
+/// Mirrors the Python and Lua MPP SDK helpers — useful for displaying a
+/// human-readable currency next to a credential's claimed mint, or for
+/// branching on the family of known stablecoins.
+pub fn stablecoin_symbol(currency_or_mint: &str) -> Option<&'static str> {
+    if is_native_sol(currency_or_mint) {
+        return None;
+    }
+    let upper = currency_or_mint.to_uppercase();
+    match upper.as_str() {
+        "USDC" => Some("USDC"),
+        "USDT" => Some("USDT"),
+        "USDG" => Some("USDG"),
+        "PYUSD" => Some("PYUSD"),
+        "CASH" => Some("CASH"),
+        _ => match currency_or_mint {
+            mints::USDC_MAINNET | mints::USDC_DEVNET => Some("USDC"),
+            mints::USDT_MAINNET => Some("USDT"),
+            mints::USDG_MAINNET | mints::USDG_DEVNET => Some("USDG"),
+            mints::PYUSD_MAINNET | mints::PYUSD_DEVNET => Some("PYUSD"),
+            mints::CASH_MAINNET => Some("CASH"),
+            _ => None,
+        },
+    }
+}
+
+/// True if a stablecoin (by symbol or mint) uses the SPL Token-2022 program
+/// rather than the legacy SPL Token program. Default for unknowns is
+/// `false` (legacy program).
+pub fn stablecoin_uses_token_2022(currency_or_mint: &str) -> bool {
+    matches!(
+        stablecoin_symbol(currency_or_mint),
+        Some("USDG") | Some("PYUSD") | Some("CASH")
+    )
+}
+
 /// Default token program for a currency or mint.
 pub fn default_token_program_for_currency(currency: &str, cluster: Option<&str>) -> &'static str {
-    match resolve_stablecoin_mint(currency, cluster) {
-        Some(mint)
-            if matches!(
-                mint,
-                mints::USDG_MAINNET
-                    | mints::USDG_DEVNET
-                    | mints::PYUSD_MAINNET
-                    | mints::PYUSD_DEVNET
-                    | mints::CASH_MAINNET
-            ) =>
-        {
-            programs::TOKEN_2022_PROGRAM
-        }
-        _ => programs::TOKEN_PROGRAM,
+    let mint = resolve_stablecoin_mint(currency, cluster).unwrap_or(currency);
+    if stablecoin_uses_token_2022(mint) {
+        programs::TOKEN_2022_PROGRAM
+    } else {
+        programs::TOKEN_PROGRAM
     }
 }
 
@@ -649,6 +689,57 @@ mod tests {
             default_token_program_for_currency(mints::CASH_MAINNET, None),
             programs::TOKEN_2022_PROGRAM
         );
+    }
+
+    #[test]
+    fn is_native_sol_recognizes_case_variants() {
+        assert!(is_native_sol("SOL"));
+        assert!(is_native_sol("sol"));
+        assert!(is_native_sol("Sol"));
+        assert!(!is_native_sol("USDC"));
+        assert!(!is_native_sol(mints::USDC_MAINNET));
+    }
+
+    #[test]
+    fn stablecoin_symbol_round_trips_symbols() {
+        for sym in ["USDC", "USDT", "USDG", "PYUSD", "CASH"] {
+            assert_eq!(stablecoin_symbol(sym), Some(sym));
+            assert_eq!(stablecoin_symbol(&sym.to_lowercase()), Some(sym));
+        }
+    }
+
+    #[test]
+    fn stablecoin_symbol_resolves_known_mints() {
+        assert_eq!(stablecoin_symbol(mints::USDC_MAINNET), Some("USDC"));
+        assert_eq!(stablecoin_symbol(mints::USDC_DEVNET), Some("USDC"));
+        assert_eq!(stablecoin_symbol(mints::USDT_MAINNET), Some("USDT"));
+        assert_eq!(stablecoin_symbol(mints::USDG_MAINNET), Some("USDG"));
+        assert_eq!(stablecoin_symbol(mints::USDG_DEVNET), Some("USDG"));
+        assert_eq!(stablecoin_symbol(mints::PYUSD_MAINNET), Some("PYUSD"));
+        assert_eq!(stablecoin_symbol(mints::PYUSD_DEVNET), Some("PYUSD"));
+        assert_eq!(stablecoin_symbol(mints::CASH_MAINNET), Some("CASH"));
+    }
+
+    #[test]
+    fn stablecoin_symbol_returns_none_for_unknown_or_sol() {
+        assert_eq!(stablecoin_symbol("SOL"), None);
+        assert_eq!(stablecoin_symbol("sol"), None);
+        // Unknown mint passes through resolve, unknown symbol does not match any.
+        assert_eq!(stablecoin_symbol("11111111111111111111111111111111"), None);
+        assert_eq!(stablecoin_symbol("UNKNOWN_TOKEN"), None);
+    }
+
+    #[test]
+    fn stablecoin_uses_token_2022_matches_token_extension_stables() {
+        assert!(stablecoin_uses_token_2022("USDG"));
+        assert!(stablecoin_uses_token_2022("PYUSD"));
+        assert!(stablecoin_uses_token_2022("CASH"));
+        assert!(stablecoin_uses_token_2022(mints::USDG_MAINNET));
+        assert!(stablecoin_uses_token_2022(mints::PYUSD_DEVNET));
+        // Legacy stablecoins use the original SPL Token program.
+        assert!(!stablecoin_uses_token_2022("USDC"));
+        assert!(!stablecoin_uses_token_2022("USDT"));
+        assert!(!stablecoin_uses_token_2022("SOL"));
     }
 
     #[test]
