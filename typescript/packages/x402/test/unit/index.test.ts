@@ -167,6 +167,7 @@ describe("@x402/svm", () => {
       expect(convertToTokenAmount("0.10", 6)).toBe("100000");
       expect(convertToTokenAmount("1.00", 6)).toBe("1000000");
       expect(convertToTokenAmount("0.01", 6)).toBe("10000");
+      expect(convertToTokenAmount("0.000001", 6)).toBe("1");
       expect(convertToTokenAmount("123.456789", 6)).toBe("123456789");
     });
 
@@ -185,6 +186,13 @@ describe("@x402/svm", () => {
       expect(() => convertToTokenAmount("abc", 6)).toThrow("Invalid amount");
       expect(() => convertToTokenAmount("", 6)).toThrow("Invalid amount");
       expect(() => convertToTokenAmount("NaN", 6)).toThrow("Invalid amount");
+      expect(() => convertToTokenAmount("-1", 6)).toThrow("Invalid amount");
+      expect(() => convertToTokenAmount("1e-7", 6)).toThrow("Invalid amount");
+    });
+
+    it("should reject amounts with more precision than token decimals", () => {
+      expect(() => convertToTokenAmount("0.0000001", 6)).toThrow("Invalid amount precision");
+      expect(() => convertToTokenAmount("1.0000001", 6)).toThrow("Invalid amount precision");
     });
   });
 
@@ -201,6 +209,15 @@ describe("@x402/svm", () => {
       it("should parse simple number string prices", async () => {
         const result = await server.parsePrice("0.10", "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp");
         expect(result.amount).toBe("100000");
+        expect(result.asset).toBe(USDC_MAINNET_ADDRESS);
+      });
+
+      it("should preserve string price precision during default conversion", async () => {
+        const result = await server.parsePrice(
+          "0.000001",
+          "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+        );
+        expect(result.amount).toBe("1");
         expect(result.asset).toBe(USDC_MAINNET_ADDRESS);
       });
 
@@ -271,6 +288,19 @@ describe("@x402/svm", () => {
           async () =>
             await server.parsePrice("not-a-price!", "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"),
         ).rejects.toThrow("Invalid money format");
+      });
+
+      it("should reject over-precise default money conversion", async () => {
+        await expect(
+          async () =>
+            await server.parsePrice("0.0000001", "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"),
+        ).rejects.toThrow("Invalid amount precision");
+      });
+
+      it("should reject negative numeric default money conversion", async () => {
+        await expect(
+          async () => await server.parsePrice(-1, "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"),
+        ).rejects.toThrow("Invalid amount");
       });
 
       it("should throw for price objects without asset", async () => {
