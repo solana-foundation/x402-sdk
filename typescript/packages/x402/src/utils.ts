@@ -322,13 +322,20 @@ export function getStablecoinTokenProgram(currency: string, network: Network): s
  * @returns The amount in smallest units as a string
  */
 export function convertToTokenAmount(decimalAmount: string, decimals: number): string {
-  const amount = parseFloat(decimalAmount);
-  if (isNaN(amount)) {
+  if (!Number.isInteger(decimals) || decimals < 0) {
+    throw new Error(`Invalid decimals: ${decimals}`);
+  }
+
+  const amount = decimalAmount.trim();
+  if (!/^\d+(?:\.\d+)?$/.test(amount)) {
     throw new Error(`Invalid amount: ${decimalAmount}`);
   }
-  // Convert to smallest unit (e.g., for USDC with 6 decimals: 0.10 * 10^6 = 100000)
-  const [intPart, decPart = ""] = String(amount).split(".");
-  const paddedDec = decPart.padEnd(decimals, "0").slice(0, decimals);
-  const tokenAmount = (intPart + paddedDec).replace(/^0+/, "") || "0";
-  return tokenAmount;
+
+  const [intPart, decPart = ""] = amount.split(".");
+  if (decPart.length > decimals) {
+    throw new Error(`Invalid amount precision: ${decimalAmount}`);
+  }
+
+  const paddedDec = decPart.padEnd(decimals, "0");
+  return BigInt(`${intPart}${paddedDec}`).toString();
 }

@@ -74,7 +74,7 @@ export class ExactSvmScheme implements SchemeNetworkServer {
     }
 
     // All custom parsers returned null, use default conversion
-    return this.defaultMoneyConversion(parsed.amount, network, parsed.symbol);
+    return this.defaultMoneyConversion(parsed.rawAmount, network, parsed.symbol);
   }
 
   /**
@@ -109,11 +109,15 @@ export class ExactSvmScheme implements SchemeNetworkServer {
    * Handles formats like "$1.50", "1.50", 1.50, etc.
    *
    * @param money - The money value to parse
-   * @returns Decimal number
+   * @returns Decimal number plus the original decimal string for exact conversion
    */
-  private parseMoney(money: string | number): { amount: number; symbol: string } {
+  private parseMoney(money: string | number): {
+    amount: number;
+    rawAmount: string;
+    symbol: string;
+  } {
     if (typeof money === "number") {
-      return { amount: money, symbol: "USDC" };
+      return { amount: money, rawAmount: String(money), symbol: "USDC" };
     }
 
     // Remove $ sign and whitespace, then parse an optional stablecoin symbol.
@@ -128,21 +132,21 @@ export class ExactSvmScheme implements SchemeNetworkServer {
       throw new Error(`Invalid money format: ${money}`);
     }
 
-    return { amount, symbol: (match[2] ?? "USDC").toUpperCase() };
+    return { amount, rawAmount: match[1], symbol: (match[2] ?? "USDC").toUpperCase() };
   }
 
   /**
    * Default money conversion implementation.
    * Converts decimal amount to a supported stablecoin on the specified network.
    *
-   * @param amount - The decimal amount (e.g., 1.50)
+   * @param amount - The decimal amount (e.g., "1.50")
    * @param network - The network to use
    * @param symbol - Stablecoin symbol to use for the payment asset
    * @returns The parsed asset amount
    */
-  private defaultMoneyConversion(amount: number, network: Network, symbol: string): AssetAmount {
+  private defaultMoneyConversion(amount: string, network: Network, symbol: string): AssetAmount {
     // Supported stablecoins in this package use 6 decimals on Solana.
-    const tokenAmount = convertToTokenAmount(amount.toString(), 6);
+    const tokenAmount = convertToTokenAmount(amount, 6);
 
     return {
       amount: tokenAmount,
