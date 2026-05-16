@@ -80,5 +80,5 @@ jobs:
         run: pnpm test
         working-directory: tests/interop
         env:
-          X402_INTEROP_CLIENTS: typescript
-          X402_INTEROP_SERVERS: typescript
+          X402_INTEROP_CLIENTS: typescript,rust
+          X402_INTEROP_SERVERS: typescript,rust
