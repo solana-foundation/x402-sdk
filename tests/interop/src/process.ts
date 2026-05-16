@@ -78,6 +78,13 @@ export async function startServer(
     throw new Error(`Unexpected server readiness payload from ${implementation.id}`);
   }
 
+  if (ready.implementation !== implementation.id) {
+    child.kill("SIGTERM");
+    throw new Error(
+      `Server adapter ${implementation.id} reported implementation ${ready.implementation}`,
+    );
+  }
+
   return { child, ready };
 }
 
@@ -104,6 +111,12 @@ export async function runClient(
 
   if (result.type !== "result" || result.role !== "client") {
     throw new Error(`Unexpected client result payload from ${implementation.id}`);
+  }
+
+  if (result.implementation !== implementation.id) {
+    throw new Error(
+      `Client adapter ${implementation.id} reported implementation ${result.implementation}`,
+    );
   }
 
   return result;
