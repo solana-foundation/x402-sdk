@@ -35,6 +35,21 @@ pnpm install
 pnpm test
 ```
 
+If the TypeScript adapter cannot resolve `@solana/x402/...` subpaths, rebuild
+the local package and refresh the interop package install:
+
+```bash
+cd typescript
+pnpm --filter @solana/x402 build
+
+cd ../tests/interop
+pnpm install --force --frozen-lockfile
+pnpm test
+```
+
+`@solana/x402` is installed from a local `file:` dependency, so `tests/interop`
+needs to install after the TypeScript package has produced its `dist` files.
+
 ## Adapter contract
 
 Adapters are ordinary process commands registered in
