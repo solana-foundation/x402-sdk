@@ -177,6 +177,16 @@
         "default": "./dist/cjs/server/exact/index.js"
       }
     },
+    "./server/upto": {
+      "import": {
+        "types": "./dist/esm/server/upto/index.d.mts",
+        "default": "./dist/esm/server/upto/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/server/upto/index.d.ts",
+        "default": "./dist/cjs/server/upto/index.js"
+      }
+    },
     "./facilitator": {
       "import": {
         "types": "./dist/esm/facilitator/index.d.mts",
@@ -215,6 +225,16 @@
       "require": {
         "types": "./dist/cjs/protocol/schemes/exact/index.d.ts",
         "default": "./dist/cjs/protocol/schemes/exact/index.js"
+      }
+    },
+    "./protocol/schemes/upto": {
+      "import": {
+        "types": "./dist/esm/protocol/schemes/upto/index.d.mts",
+        "default": "./dist/esm/protocol/schemes/upto/index.mjs"
+      },
+      "require": {
+        "types": "./dist/cjs/protocol/schemes/upto/index.d.ts",
+        "default": "./dist/cjs/protocol/schemes/upto/index.js"
       }
     },
     "./siwx": {

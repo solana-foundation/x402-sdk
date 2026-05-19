@@ -25,6 +25,10 @@ export {
   ExactSvmScheme as ExactServerScheme,
   registerExactSvmScheme as registerExactServerScheme,
 } from "./server/exact";
+export {
+  UptoSvmScheme as UptoServerScheme,
+  registerUptoSvmScheme as registerUptoServerScheme,
+} from "./server/upto";
 
 export { toClientSvmSigner, toFacilitatorSvmSigner } from "./signer";
 export type {
@@ -37,6 +41,7 @@ export type {
 
 export type { ExactSvmPayloadV1, ExactSvmPayloadV2 } from "./protocol/schemes/exact/types";
 export * from "./protocol/schemes/exact";
+export * from "./protocol/schemes/upto";
 
 export { SettlementCache } from "./settlement-cache";
 export * from "./siwx";
