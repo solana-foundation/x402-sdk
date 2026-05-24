@@ -34,10 +34,25 @@ jobs:
         run: pnpm --filter @solana/x402 test:coverage
         working-directory: typescript
 
+  swift:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift tests
+        run: swift test
+        working-directory: swift
+
   interop:
+    # Runs the reference-spine smoke on Linux. Swift is intentionally NOT in
+    # X402_INTEROP_CLIENTS here because ubuntu-latest ships no Swift
+    # toolchain; the Swift adapter is additionally guarded by a darwin
+    # runtime check in tests/interop/src/implementations.ts, so accidentally
+    # passing `swift` in X402_INTEROP_CLIENTS here is a no-op rather than a
+    # `swift: command not found` failure.
     runs-on: ubuntu-latest
     needs:
       - rust
+      - swift
       - typescript
     steps:
       - uses: actions/checkout@v4

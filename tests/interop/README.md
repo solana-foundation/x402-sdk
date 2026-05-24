@@ -9,7 +9,7 @@ This package hosts the cross-language x402 conformance harness.
 - The harness spawns server adapters, waits for a JSON `ready` message, then runs client adapters against them.
 - The harness starts an embedded Surfpool simnet via `surfpool-sdk`, funds test accounts, and passes the same RPC and signer environment into every adapter.
 - The default matrix runs TypeScript and Rust clients against TypeScript and Rust servers.
-- Future Go, Python, and Lua adapters can plug into the same process contract without changing the test runner.
+- Future Go, Python, Lua, and Swift adapters can plug into the same process contract without changing the test runner.
 
 ## Current scope
 
@@ -19,6 +19,9 @@ The current reference flow is chain-backed and CI-friendly:
 - the TypeScript reference client uses `@x402/core` HTTP client wrappers and `@solana/x402/client`
 - the Rust reference server uses the Rust crate's exact verifier, facilitator fee-payer co-signing, Surfpool RPC simulation, and transaction submission
 - the Rust reference client uses the Rust crate's exact challenge parser and v2 `PAYMENT-SIGNATURE` builder
+- the Swift adapter is registered as an opt-in client-only lane with default
+  ATA PDA derivation covered by unit tests; it is disabled by default until the
+  chain-backed Swift smoke lane is green and reviewed
 - the suite starts an embedded Surfpool simnet, funds a client signer with devnet USDC, pays a protected endpoint, and verifies the recipient ATA balance increases on-chain
 
 That means the harness now validates end-to-end HTTP x402 interoperability, real Solana transaction construction, facilitator co-signing, settlement, and on-chain balance changes.
@@ -158,6 +161,8 @@ Optional variables:
 Use these environment variables to filter the active matrix:
 
 - `X402_INTEROP_CLIENTS=typescript,rust`
+- `X402_INTEROP_CLIENTS=swift` enables the experimental Swift client adapter
+  against the selected server adapters
 - `X402_INTEROP_SERVERS=typescript,rust`
 - `X402_INTEROP_PROFILE=reference-spine|full`
 - `X402_INTEROP_REFERENCE=rust`

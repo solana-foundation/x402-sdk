@@ -8,6 +8,7 @@ This repository is modeled after `solana-mpp-sdk`, but scoped to x402 and intent
 
 - `rust/`: initial Solana `exact` scheme implementation imported from the existing draft and adapted toward the x402 wire format
 - `typescript/`: initial `@solana/x402` workspace bootstrapped from the canonical SVM package layout
+- `swift/`: client-only SwiftPM `exact` scaffold with injected Solana signer, pure-Swift ATA PDA derivation, and an opt-in interop client adapter
 - `tests/interop/`: shared cross-language conformance harness with process-based client/server adapters and an embedded Surfpool simnet
 - target coverage: 95% per implementation, starting with Rust
 
