@@ -5,6 +5,9 @@
   "packageManager": "pnpm@10.14.0",
   "scripts": {
     "test": "vitest run",
+    "test:probe:go-build": "cd ../../go && GOTOOLCHAIN=go1.24.0 go test ./... -cover",
+    "test:probe:go-client": "X402_INTEROP_CLIENTS=go X402_INTEROP_SERVERS=rust pnpm test:smoke",
+    "test:probe:go-server": "X402_INTEROP_CLIENTS=typescript X402_INTEROP_SERVERS=go pnpm test:smoke",
     "test:smoke": "vitest run test/e2e.test.ts --testNamePattern \"client pays\"",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"

@@ -42,6 +42,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -57,6 +60,9 @@ jobs:
       - name: Build Rust interop adapters
         run: cargo build --bin interop_client --bin interop_server
         working-directory: rust
+      - name: Test Go exact adapters with coverage
+        run: go test ./... -cover
+        working-directory: go
       - name: Install interop harness
         run: pnpm install
         working-directory: tests/interop
@@ -69,3 +75,6 @@ jobs:
         env:
           X402_INTEROP_PROFILE: reference-spine
           X402_INTEROP_REFERENCE: rust
+      - name: Run Go exact interop probes
+        run: pnpm test:probe:go-build && pnpm test:probe:go-client && pnpm test:probe:go-server
+        working-directory: tests/interop

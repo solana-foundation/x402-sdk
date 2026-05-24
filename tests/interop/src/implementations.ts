@@ -42,6 +42,13 @@ export const clientImplementations: ImplementationDefinition[] = [
     ],
     enabled: isEnabled("rust", "X402_INTEROP_CLIENTS", true),
   },
+  {
+    id: "go",
+    label: "Go HTTP client",
+    role: "client",
+    command: ["sh", "-c", "cd ../../go && go run ./cmd/interop-client"],
+    enabled: isEnabled("go", "X402_INTEROP_CLIENTS", false),
+  },
 ];
 
 export const serverImplementations: ImplementationDefinition[] = [
@@ -66,5 +73,12 @@ export const serverImplementations: ImplementationDefinition[] = [
       "interop_server",
     ],
     enabled: isEnabled("rust", "X402_INTEROP_SERVERS", true),
+  },
+  {
+    id: "go",
+    label: "Go HTTP server",
+    role: "server",
+    command: ["sh", "-c", "cd ../../go && go run ./cmd/interop-server"],
+    enabled: isEnabled("go", "X402_INTEROP_SERVERS", false),
   },
 ];
