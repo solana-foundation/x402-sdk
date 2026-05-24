@@ -3,6 +3,8 @@ export type ImplementationDefinition = {
   label: string;
   role: "client" | "server";
   command: string[];
+  cwd?: string;
+  requiredManifest?: string;
   enabled: boolean;
 };
 
@@ -66,5 +68,14 @@ export const serverImplementations: ImplementationDefinition[] = [
       "interop_server",
     ],
     enabled: isEnabled("rust", "X402_INTEROP_SERVERS", true),
+  },
+  {
+    id: "lua",
+    label: "Lua HTTP server",
+    role: "server",
+    command: ["lua", "bin/interop-server.lua"],
+    cwd: "../../lua",
+    requiredManifest: "../../lua/x402-sdk-svm-0.0.0-1.rockspec",
+    enabled: isEnabled("lua", "X402_INTEROP_SERVERS", false),
   },
 ];

@@ -5,6 +5,10 @@
   "packageManager": "pnpm@10.14.0",
   "scripts": {
     "test": "vitest run",
+    "test:probe:lua-static": "vitest run test/lua-scaffold.test.ts",
+    "test:probe:lua-runtime": "vitest run test/lua-runtime.test.ts",
+    "test:probe:lua-syntax": "cd ../../lua && if command -v luac >/dev/null 2>&1; then luac -p bin/interop-server.lua; elif command -v lua >/dev/null 2>&1; then lua -e 'assert(loadfile(\"bin/interop-server.lua\"))'; else echo 'Lua toolchain not found; skipping optional syntax probe' >&2; fi",
+    "test:probe:lua-server": "X402_INTEROP_CLIENTS=typescript X402_INTEROP_SERVERS=lua vitest run test/e2e.test.ts --testNamePattern \"typescript client pays lua server\"",
     "test:smoke": "vitest run test/e2e.test.ts --testNamePattern \"client pays\"",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"

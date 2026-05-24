@@ -59,6 +59,9 @@ beforeAll(async () => {
 
   const client = Surfnet.newKeypair();
   const payTo = Surfnet.newKeypair();
+  const { createKeyPairFromBytes, getAddressFromPublicKey } = await import("@solana/kit");
+  const payerKeypair = await createKeyPairFromBytes(new Uint8Array(surfnet.payerSecretKey));
+  const feePayer = await getAddressFromPublicKey(payerKeypair.publicKey);
 
   surfnet.setAccount(interopScenario.asset, 1_461_600, createSplMintAccountData(6), TOKEN_PROGRAM);
   surfnet.fundToken(client.publicKey, interopScenario.asset, 100_000);
@@ -70,6 +73,7 @@ beforeAll(async () => {
     X402_INTEROP_MINT: interopScenario.asset,
     X402_INTEROP_PRICE: interopScenario.price,
     X402_INTEROP_PAY_TO: payTo.publicKey,
+    X402_INTEROP_FEE_PAYER: feePayer,
     X402_INTEROP_CLIENT_SECRET_KEY: JSON.stringify(Array.from(client.secretKey)),
     X402_INTEROP_FACILITATOR_SECRET_KEY: JSON.stringify(Array.from(surfnet.payerSecretKey)),
   };
