@@ -3,6 +3,8 @@ export type ImplementationDefinition = {
   label: string;
   role: "client" | "server";
   command: string[];
+  cwd?: string;
+  env?: Record<string, string>;
   enabled: boolean;
 };
 
@@ -42,6 +44,14 @@ export const clientImplementations: ImplementationDefinition[] = [
     ],
     enabled: isEnabled("rust", "X402_INTEROP_CLIENTS", true),
   },
+  {
+    id: "ruby",
+    label: "Ruby HTTP client",
+    role: "client",
+    command: ["ruby", "bin/interop-client"],
+    cwd: "../../ruby",
+    enabled: isEnabled("ruby", "X402_INTEROP_CLIENTS", false),
+  },
 ];
 
 export const serverImplementations: ImplementationDefinition[] = [
@@ -66,5 +76,13 @@ export const serverImplementations: ImplementationDefinition[] = [
       "interop_server",
     ],
     enabled: isEnabled("rust", "X402_INTEROP_SERVERS", true),
+  },
+  {
+    id: "ruby",
+    label: "Ruby HTTP server",
+    role: "server",
+    command: ["ruby", "bin/interop-server"],
+    cwd: "../../ruby",
+    enabled: isEnabled("ruby", "X402_INTEROP_SERVERS", false),
   },
 ];

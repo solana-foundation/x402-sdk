@@ -69,3 +69,49 @@ jobs:
         env:
           X402_INTEROP_PROFILE: reference-spine
           X402_INTEROP_REFERENCE: rust
+
+  ruby:
+    runs-on: ubuntu-latest
+    needs:
+      - rust
+      - typescript
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+      - name: Ruby syntax
+        run: find . -name "*.rb" -print0 | xargs -0 -n1 ruby -c
+        working-directory: ruby
+      - name: Ruby unit tests with coverage
+        run: |
+          X402_RUBY_COVERAGE=1 ruby -Ilib:test test/all_test.rb
+          ruby -rjson -e 'report=JSON.parse(File.read("coverage/coverage.json")); puts JSON.pretty_generate(report); abort("Ruby coverage below 90%: #{report["line_percent"]}%") if report["line_percent"] < 90.0'
+        working-directory: ruby
+      - name: Install TypeScript workspace
+        run: pnpm install
+        working-directory: typescript
+      - name: Build TypeScript package
+        run: pnpm --filter @solana/x402 build
+        working-directory: typescript
+      - name: Build Rust interop adapters
+        run: cargo build --bin interop_client --bin interop_server
+        working-directory: rust
+      - name: Install interop harness
+        run: pnpm install
+        working-directory: tests/interop
+      - name: Typecheck interop harness
+        run: pnpm typecheck
+        working-directory: tests/interop
+      - name: Run Ruby exact interop smoke
+        run: |
+          X402_INTEROP_PROFILE=full X402_INTEROP_CLIENTS=ruby X402_INTEROP_SERVERS=rust pnpm test:smoke
+          X402_INTEROP_PROFILE=full X402_INTEROP_CLIENTS=typescript X402_INTEROP_SERVERS=ruby pnpm test:smoke
+        working-directory: tests/interop

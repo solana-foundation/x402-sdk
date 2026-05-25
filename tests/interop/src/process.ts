@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
 import type { AdapterMessage, ClientRunResult, ReadyMessage } from "./contracts";
@@ -41,6 +42,10 @@ async function waitForJsonMessage<T extends AdapterMessage>(
         child.once("exit", code => {
           reject(new Error(`Adapter exited before signaling readiness/result (code ${code ?? -1})`));
         });
+
+        child.once("error", error => {
+          reject(new Error(`Failed to start adapter command: ${error.message}`));
+        });
       }),
       delay(timeoutMs).then(() => {
         throw new Error(`Timed out waiting for adapter output after ${timeoutMs}ms`);
@@ -57,9 +62,10 @@ function spawnAdapter(
 ): ChildProcess {
   const [command, ...args] = implementation.command;
   return spawn(command, args, {
-    cwd: process.cwd(),
+    cwd: implementation.cwd ? join(process.cwd(), implementation.cwd) : process.cwd(),
     env: {
       ...process.env,
+      ...implementation.env,
       ...extraEnv,
     },
     stdio: ["ignore", "pipe", "inherit"],
