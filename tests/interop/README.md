@@ -10,6 +10,7 @@ This package hosts the cross-language x402 conformance harness.
 - The harness starts an embedded Surfpool simnet via `surfpool-sdk`, funds test accounts, and passes the same RPC and signer environment into every adapter.
 - The default matrix runs TypeScript and Rust clients against TypeScript and Rust servers.
 - Future Go, Python, and Lua adapters can plug into the same process contract without changing the test runner.
+- The PHP adapter currently implements the exact server role and is enabled only when selected explicitly.
 
 ## Current scope
 
@@ -166,5 +167,11 @@ If no filter is set, all stable adapters are enabled by default:
 
 - clients: `typescript,rust`
 - servers: `typescript,rust`
+
+The PHP exact server can be exercised against the reference clients with:
+
+```bash
+X402_INTEROP_CLIENTS=typescript,rust X402_INTEROP_SERVERS=php X402_INTEROP_PROFILE=full pnpm test:smoke
+```
 
 The suite performs a local socket-bind preflight. If the current environment forbids opening loopback ports, the e2e test is skipped instead of failing. In CI, where loopback sockets are available, the matrix runs normally.

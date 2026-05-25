@@ -34,14 +34,34 @@ jobs:
         run: pnpm --filter @solana/x402 test:coverage
         working-directory: typescript
 
+  php:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          extensions: gmp
+          coverage: xdebug
+      - name: Test PHP package
+        run: |
+          composer test
+          X402_PHP_COVERAGE_MIN=90 composer coverage
+        working-directory: php
+
   interop:
     runs-on: ubuntu-latest
     needs:
       - rust
       - typescript
+      - php
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          extensions: gmp
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -69,3 +89,10 @@ jobs:
         env:
           X402_INTEROP_PROFILE: reference-spine
           X402_INTEROP_REFERENCE: rust
+      - name: Run PHP exact server interop smoke
+        run: pnpm test:smoke
+        working-directory: tests/interop
+        env:
+          X402_INTEROP_CLIENTS: typescript,rust
+          X402_INTEROP_SERVERS: php
+          X402_INTEROP_PROFILE: full

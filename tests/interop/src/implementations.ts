@@ -3,6 +3,8 @@ export type ImplementationDefinition = {
   label: string;
   role: "client" | "server";
   command: string[];
+  cwd?: string;
+  requiredManifest?: string;
   enabled: boolean;
 };
 
@@ -66,5 +68,14 @@ export const serverImplementations: ImplementationDefinition[] = [
       "interop_server",
     ],
     enabled: isEnabled("rust", "X402_INTEROP_SERVERS", true),
+  },
+  {
+    id: "php",
+    label: "PHP HTTP server",
+    role: "server",
+    command: ["php", "bin/interop-server.php"],
+    cwd: "../../php",
+    requiredManifest: "../../php/composer.json",
+    enabled: isEnabled("php", "X402_INTEROP_SERVERS", false),
   },
 ];

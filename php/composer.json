@@ -1,0 +1,18 @@
+{
+  "name": "solana-foundation/x402-sdk-svm",
+  "description": "Experimental PHP scaffold for Solana x402 server-side interop adapters",
+  "type": "library",
+  "license": "Apache-2.0",
+  "require": {
+    "ext-gmp": "*",
+    "php": ">=8.2"
+  },
+  "scripts": {
+    "lint": "php -l src/InteropServer.php && php -l bin/interop-server.php && php -l tests/interop_server_test.php",
+    "test": [
+      "@lint",
+      "php tests/interop_server_test.php"
+    ],
+    "coverage": "X402_PHP_COVERAGE=1 php tests/interop_server_test.php"
+  }
+}

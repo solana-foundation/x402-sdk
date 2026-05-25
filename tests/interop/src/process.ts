@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
 import type { AdapterMessage, ClientRunResult, ReadyMessage } from "./contracts";
@@ -57,7 +58,7 @@ function spawnAdapter(
 ): ChildProcess {
   const [command, ...args] = implementation.command;
   return spawn(command, args, {
-    cwd: process.cwd(),
+    cwd: implementation.cwd ? join(process.cwd(), implementation.cwd) : process.cwd(),
     env: {
       ...process.env,
       ...extraEnv,
