@@ -165,7 +165,16 @@ pub fn default_token_program_for_currency(currency: &str, cluster: Option<&str>)
 }
 
 /// Resource metadata carried by canonical x402 v2 payment-required responses.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// Serialization emits the canonical v2 `{ url, description?, mimeType? }`
+/// shape. Deserialization is intentionally permissive: foreign servers in
+/// the interop matrix (Go, Ruby, Python, Lua) emit the equivalent
+/// `{ type: "http", uri }` shape, and a strict serde struct would reject
+/// those envelopes outright — breaking every Rust-client → foreign-server
+/// pair with `server did not return a supported SVM x402 challenge`.
+/// Accept either `url` or `uri`, ignore unknown fields, and fall back to
+/// an empty url string when neither is present rather than failing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourceInfo {
     pub url: String,
@@ -173,6 +182,40 @@ pub struct ResourceInfo {
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for ResourceInfo {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        // Some adapters serialize the resource as a bare string URL; treat
+        // that as `{ url: <value> }`.
+        if let Some(url) = value.as_str() {
+            return Ok(ResourceInfo {
+                url: url.to_string(),
+                description: None,
+                mime_type: None,
+            });
+        }
+
+        let object = value
+            .as_object()
+            .ok_or_else(|| serde::de::Error::custom("resource must be a string or object"))?;
+
+        let url = string_field(object, "url")
+            .or_else(|| string_field(object, "uri"))
+            .unwrap_or_default();
+        let description = string_field(object, "description");
+        let mime_type = string_field(object, "mimeType").or_else(|| string_field(object, "mime_type"));
+
+        Ok(ResourceInfo {
+            url,
+            description,
+            mime_type,
+        })
+    }
 }
 
 /// Solana payment requirements for the x402 `exact` scheme.

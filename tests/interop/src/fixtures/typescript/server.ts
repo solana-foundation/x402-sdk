@@ -7,8 +7,76 @@ import type { SupportedResponse } from "@x402/core/types";
 import { registerExactSvmScheme as registerExactFacilitatorScheme } from "@solana/x402/facilitator/exact";
 import { toFacilitatorSvmSigner } from "@solana/x402";
 import { registerExactSvmScheme as registerExactServerScheme } from "@solana/x402/server/exact";
-import { interopScenario } from "../../contracts";
+import { interopScenario, localSolanaInteropCapabilities } from "../../contracts";
 import { fixtureSettlementHeader, readInteropEnvironment } from "./shared";
+
+export type InteropAcceptEntry = {
+  scheme: string;
+  network: string;
+  payTo: string;
+  price: { amount: string; asset: string; extra: { decimals: number; tokenProgram: string } };
+};
+
+const TOKEN_PROGRAM_ADDRESS = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+const TOKEN_2022_PROGRAM_ADDRESS = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
+
+// Mints that ship as Token-2022. USDC is canonical SPL Token classic;
+// PYUSD/USDG/CASH are Token-2022 on every network. Mirrors
+// STABLECOIN_TOKEN_PROGRAMS at
+// typescript/packages/x402/src/protocol/schemes/exact/constants.ts:113.
+const TOKEN_2022_MINTS: ReadonlySet<string> = new Set([
+  "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo", // PYUSD mainnet
+  "CXk2AMBfi3TwaEL2468s6zP8xq9NxTXjp9gjMgzeUynM", // PYUSD devnet/testnet
+  "2u1tszSeqZ3qBWF3uNGPFc8TzMk2tdiwknnRMWGWjGWH", // USDG mainnet
+  "4F6PM96JJxngmHnZLBh9n58RH4aTVNWvDs2nuwrT5BP7", // USDG devnet/testnet
+  "CASHx9KJUStyftLFWGvEVf59SGeG9sh5FfcnZMVPCASH", // CASH mainnet
+]);
+
+function tokenProgramForMint(mint: string): string {
+  return TOKEN_2022_MINTS.has(mint) ? TOKEN_2022_PROGRAM_ADDRESS : TOKEN_PROGRAM_ADDRESS;
+}
+
+/**
+ * Build the `accepts` list advertised by the TypeScript interop server.
+ *
+ * Every accept entry must carry both `extra.decimals` (so foreign clients
+ * scale the SPL transfer correctly) and `extra.tokenProgram` (so they
+ * target SPL Token classic vs Token-2022 correctly). The upstream
+ * string-price helper resolves `$0.001` to USDC + 6 decimals but emits
+ * `extra: {}`; we expand every entry into the object form so the wire
+ * shape stays canonical.
+ *
+ * Extracted from `main` so the wire shape can be asserted in unit tests
+ * without spawning the HTTP server.
+ */
+export function buildInteropAcceptsList(options: {
+  network: string;
+  payTo: string;
+  extraOfferedMints: readonly string[];
+}): InteropAcceptEntry[] {
+  return [
+    {
+      scheme: interopScenario.scheme,
+      network: options.network,
+      payTo: options.payTo,
+      price: {
+        amount: "1000",
+        asset: interopScenario.asset,
+        extra: { decimals: 6, tokenProgram: tokenProgramForMint(interopScenario.asset) },
+      },
+    },
+    ...options.extraOfferedMints.map(mint => ({
+      scheme: interopScenario.scheme,
+      network: options.network,
+      payTo: options.payTo,
+      price: {
+        amount: "1000",
+        asset: mint,
+        extra: { decimals: 6, tokenProgram: tokenProgramForMint(mint) },
+      },
+    })),
+  ];
+}
 
 class NodeAdapter implements HTTPAdapter {
   constructor(
@@ -89,25 +157,16 @@ async function main() {
     .split(",")
     .map(entry => entry.trim())
     .filter(Boolean);
-  const acceptsList: Array<{
+  const acceptsList = buildInteropAcceptsList({
+    network: environment.network,
+    payTo: environment.payTo,
+    extraOfferedMints,
+  }) as unknown as Array<{
     scheme: string;
     network: never;
     payTo: string;
-    price: string | { amount: string; asset: string; extra?: { decimals: number } };
-  }> = [
-    {
-      scheme: interopScenario.scheme,
-      network: environment.network as never,
-      payTo: environment.payTo,
-      price: interopScenario.price,
-    },
-    ...extraOfferedMints.map(mint => ({
-      scheme: interopScenario.scheme,
-      network: environment.network as never,
-      payTo: environment.payTo,
-      price: { amount: "1000", asset: mint, extra: { decimals: 6 } },
-    })),
-  ];
+    price: { amount: string; asset: string; extra: { decimals: number } };
+  }>;
 
   const httpServer = new x402HTTPResourceServer(resourceServer, {
     [`GET ${interopScenario.resourcePath}`]: {
@@ -195,7 +254,7 @@ async function main() {
         implementation: "typescript",
         role: "server",
         port: address.port,
-        capabilities: ["exact"],
+        capabilities: localSolanaInteropCapabilities,
       }),
     );
   });
@@ -208,4 +267,19 @@ async function main() {
   process.on("SIGINT", shutdown);
 }
 
-void main();
+// Only spawn the HTTP server when this module is executed directly (i.e.
+// by the interop adapter command). Avoid side effects when imported by
+// unit tests that exercise `buildInteropAcceptsList` etc.
+const invokedAsScript = (() => {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return new URL(`file://${entry}`).href === import.meta.url;
+  } catch {
+    return false;
+  }
+})();
+
+if (invokedAsScript) {
+  void main();
+}

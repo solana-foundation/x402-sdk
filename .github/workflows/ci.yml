@@ -63,6 +63,18 @@ jobs:
       - name: Typecheck interop harness
         run: pnpm typecheck
         working-directory: tests/interop
+      - name: Run upto readiness boundary tests
+        run: pnpm test:upto-readiness
+        working-directory: tests/interop
+      - name: Print upto readiness report
+        run: pnpm upto:readiness
+        working-directory: tests/interop
+      - name: Run batch-settlement readiness gate
+        run: pnpm test:batch-readiness
+        working-directory: tests/interop
+      - name: Print batch-settlement readiness report
+        run: pnpm batch:readiness
+        working-directory: tests/interop
       - name: Run reference-spine interop smoke
         run: pnpm test:smoke
         working-directory: tests/interop

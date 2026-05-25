@@ -71,6 +71,10 @@ export class ExactSvmSchemeV1 implements SchemeNetworkFacilitator {
   getExtra(_: string): Record<string, unknown> | undefined {
     // Randomly select from available signers to distribute load
     const addresses = this.signer.getAddresses();
+    if (addresses.length === 0) {
+      return undefined;
+    }
+
     const randomIndex = Math.floor(Math.random() * addresses.length);
 
     return {

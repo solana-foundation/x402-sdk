@@ -288,6 +288,19 @@ describe("facilitator branch matrix", () => {
     expect(v1.getSigners("solana-devnet")).toEqual([feePayer, facilitatorAddress]);
   });
 
+  it("does not advertise fee payer extra data without configured signers", () => {
+    const signer = createSigner();
+    signer.getAddresses.mockReturnValue([]);
+
+    const v2 = new ExactSvmScheme(signer as never);
+    const v1 = new ExactSvmSchemeV1(signer as never);
+
+    expect(v2.getExtra(SOLANA_DEVNET_CAIP2)).toBeUndefined();
+    expect(v2.getSigners(SOLANA_DEVNET_CAIP2)).toEqual([]);
+    expect(v1.getExtra("solana-devnet")).toBeUndefined();
+    expect(v1.getSigners("solana-devnet")).toEqual([]);
+  });
+
   it("covers common verify failure branches for V2 and V1", async () => {
     await expectInvalidV2(
       signer => signer.getAddresses.mockReturnValue([facilitatorAddress]),

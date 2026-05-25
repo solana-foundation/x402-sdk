@@ -914,6 +914,79 @@ mod tests {
         assert!(parse_x402_challenge(&[], Some("garbage")).is_none());
     }
 
+    /// Regression for the Gate-5 interop sweep: the Go, Ruby, Python, and
+    /// Lua interop servers serialize `resource` as `{ "type": "http",
+    /// "uri": "..." }` rather than the strict `{ "url": "..." }` shape
+    /// the Rust struct used to require. A strict deserializer would
+    /// reject the whole envelope and surface as `server did not return a
+    /// supported SVM x402 challenge`, breaking every Rust-client →
+    /// foreign-server pair in the matrix.
+    #[test]
+    fn parse_x402_challenge_accepts_foreign_resource_shape() {
+        let body = serde_json::json!({
+            X402_VERSION_FIELD: X402_VERSION_V2,
+            "resource": { "type": "http", "uri": "/protected" },
+            "accepts": [{
+                "scheme": EXACT_SCHEME,
+                "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+                "amount": "1000",
+                "asset": mints::USDC_DEVNET,
+                "payTo": "11111111111111111111111111111111",
+                "maxTimeoutSeconds": 300,
+                "extra": {
+                    "decimals": 6,
+                    "feePayer": "11111111111111111111111111111111",
+                    "tokenProgram": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+                }
+            }]
+        })
+        .to_string();
+
+        let selection = ChallengeSelection {
+            network: Some("devnet"),
+            currencies: None,
+        };
+        let req = parse_x402_challenge_with_selection(&[], Some(&body), &selection)
+            .expect("foreign-shape resource envelope must parse");
+        assert_eq!(req.amount, "1000");
+        assert_eq!(req.currency, mints::USDC_DEVNET);
+        assert_eq!(
+            req.resource_info
+                .as_ref()
+                .map(|resource| resource.url.as_str()),
+            Some("/protected")
+        );
+    }
+
+    /// Bare-string `resource` (some adapters emit just a URL string) must
+    /// also be accepted rather than rejected by the strict struct shape.
+    #[test]
+    fn parse_x402_challenge_accepts_bare_string_resource() {
+        let body = serde_json::json!({
+            X402_VERSION_FIELD: X402_VERSION_V2,
+            "resource": "/protected",
+            "accepts": [{
+                "scheme": EXACT_SCHEME,
+                "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+                "amount": "1000",
+                "asset": mints::USDC_DEVNET,
+                "payTo": "11111111111111111111111111111111",
+                "maxTimeoutSeconds": 300,
+                "extra": { "decimals": 6 }
+            }]
+        })
+        .to_string();
+
+        let req = parse_x402_challenge(&[], Some(&body)).expect("bare-string resource must parse");
+        assert_eq!(req.amount, "1000");
+        assert_eq!(
+            req.resource_info
+                .as_ref()
+                .map(|resource| resource.url.as_str()),
+            Some("/protected")
+        );
+    }
+
     #[test]
     fn resolve_mint_known_symbols() {
         assert_eq!(resolve_mint("SOL", None), None);

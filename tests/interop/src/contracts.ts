@@ -1,5 +1,7 @@
 export type AdapterKind = "client" | "server";
 
+export const localSolanaInteropCapabilities = ["exact"] as const;
+
 export type InteropScenario = {
   scheme: "exact";
   network: string;
@@ -9,12 +11,16 @@ export type InteropScenario = {
   settlementHeader: string;
 };
 
+export const supportedInteropCapabilities = ["exact"] as const;
+
+export const unsupportedReadinessCapabilities = ["batch-settlement", "session"] as const;
+
 export type ReadyMessage = {
   type: "ready";
   implementation: string;
   role: AdapterKind;
   port?: number;
-  capabilities?: string[];
+  capabilities?: readonly string[];
 };
 
 export type ClientRunResult = {
@@ -26,6 +32,12 @@ export type ClientRunResult = {
   responseHeaders: Record<string, string>;
   responseBody: unknown;
   settlement?: unknown;
+  // The encoded x402 payment header (PAYMENT-SIGNATURE for v2, X-PAYMENT
+  // for v1) that the client actually sent on the second/paid request.
+  // Captured so cross-server-portability and idempotent-resubmit scenarios
+  // can replay the exact credential. Optional because not every adapter
+  // exposes it yet; TypeScript reference adapter always sets it.
+  paymentHeader?: string | null;
 };
 
 export type AdapterMessage = ReadyMessage | ClientRunResult;

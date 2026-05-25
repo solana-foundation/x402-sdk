@@ -4,8 +4,18 @@
   "type": "module",
   "packageManager": "pnpm@10.14.0",
   "scripts": {
+    "upto:readiness": "node --import tsx -e \"import('./src/upto-readiness.ts').then(m => console.log(m.formatUptoReadinessReport())).catch(error => { console.error(error); process.exit(1); })\"",
     "test": "vitest run",
+    "test:boundaries": "vitest run test/boundary.test.ts test/exact-fixtures.test.ts",
+    "test:upto-readiness": "vitest run test/upto-readiness.test.ts",
+    "batch:readiness": "node --import tsx -e \"import('./src/batch-settlement-readiness.ts').then(m => console.log(m.formatBatchSettlementReadinessReport())).catch(error => { console.error(error); process.exit(1); })\"",
+    "test:batch-readiness": "vitest run test/batch-settlement-readiness.test.ts",
     "test:smoke": "vitest run test/e2e.test.ts --testNamePattern \"client pays\"",
+    "test:e2e": "vitest run test/e2e.test.ts",
+    "test:process": "vitest run test/process.test.ts test/implementations.test.ts",
+    "test:typescript": "X402_INTEROP_CLIENTS=typescript X402_INTEROP_SERVERS=typescript vitest run test/e2e.test.ts",
+    "test:rust": "X402_INTEROP_CLIENTS=rust X402_INTEROP_SERVERS=rust vitest run test/e2e.test.ts",
+    "test:matrix": "X402_INTEROP_CLIENTS=typescript,rust X402_INTEROP_SERVERS=typescript,rust vitest run test/e2e.test.ts",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },

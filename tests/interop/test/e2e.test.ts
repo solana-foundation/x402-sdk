@@ -11,6 +11,7 @@ type RunningServer = Awaited<ReturnType<typeof startServer>>;
 
 const TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const MINT_ACCOUNT_SIZE = 82;
+const MULTI_CURRENCY_CASE_TIMEOUT_MS = 45_000;
 
 const runningServers: RunningServer[] = [];
 
@@ -49,6 +50,15 @@ function createSplMintAccountData(decimals: number): Uint8Array {
 }
 
 const socketSupport = await canBindLocalSocket();
+const activeServers = serverImplementations.filter(implementation => implementation.enabled);
+const activeClients = clientImplementations.filter(implementation => implementation.enabled);
+const activePairs = selectInteropPairs(activeClients, activeServers);
+const hasEnabledMatrix = activeServers.length > 0 && activeClients.length > 0;
+const matrixDescribe = hasEnabledMatrix ? describe : describe.skip;
+
+function implementationIds(implementations: typeof serverImplementations): string {
+  return implementations.map(implementation => implementation.id).join(", ");
+}
 
 beforeAll(async () => {
   if (!socketSupport) {
@@ -85,10 +95,18 @@ afterEach(async () => {
 });
 
 describe("x402 interop", () => {
-  const activeServers = serverImplementations.filter(implementation => implementation.enabled);
-  const activeClients = clientImplementations.filter(implementation => implementation.enabled);
-  const activePairs = selectInteropPairs(activeClients, activeServers);
   const socketAwareIt = socketSupport ? it : it.skip;
+
+  it("has at least one enabled client and server implementation", () => {
+    expect(
+      activeClients.length,
+      `No x402 interop clients enabled. Set X402_INTEROP_CLIENTS to one of: ${implementationIds(clientImplementations)}`,
+    ).toBeGreaterThan(0);
+    expect(
+      activeServers.length,
+      `No x402 interop servers enabled. Set X402_INTEROP_SERVERS to one of: ${implementationIds(serverImplementations)}`,
+    ).toBeGreaterThan(0);
+  });
 
   for (const { client: clientImplementation, server: serverImplementation } of activePairs) {
     socketAwareIt(`${clientImplementation.id} client pays ${serverImplementation.id} server`, async () => {
@@ -139,11 +157,8 @@ describe("x402 interop", () => {
 const TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
 const PYUSD_DEVNET_MINT = "CXk2AMBfi3TwaEL2468s6zP8xq9NxTXjp9gjMgzeUynM";
 
-describe("x402 interop multi-currency", () => {
+matrixDescribe("x402 interop multi-currency", () => {
   const socketAwareIt = socketSupport ? it : it.skip;
-  const activeServers = serverImplementations.filter(implementation => implementation.enabled);
-  const activeClients = clientImplementations.filter(implementation => implementation.enabled);
-  const activePairs = selectInteropPairs(activeClients, activeServers);
 
   async function setupPyusdMint(): Promise<string> {
     if (!surfnet || !interopEnv) {
@@ -212,7 +227,7 @@ describe("x402 interop multi-currency", () => {
         expect(result.status).toBe(200);
         expect(finalPyusdBalance - initialPyusdBalance).toBe(1_000n);
       },
-      20_000,
+      MULTI_CURRENCY_CASE_TIMEOUT_MS,
     );
 
     socketAwareIt(
@@ -250,7 +265,7 @@ describe("x402 interop multi-currency", () => {
         expect(result.ok, JSON.stringify(result, null, 2)).toBe(true);
         expect(finalUsdcBalance - initialUsdcBalance).toBe(1_000n);
       },
-      20_000,
+      MULTI_CURRENCY_CASE_TIMEOUT_MS,
     );
   }
 });

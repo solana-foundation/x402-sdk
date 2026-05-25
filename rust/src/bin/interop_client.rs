@@ -1,5 +1,6 @@
 use std::{collections::HashMap, env};
 
+use base64::Engine;
 use serde_json::json;
 use solana_keychain::memory::MemorySigner;
 use solana_rpc_client::rpc_client::RpcClient;
@@ -50,7 +51,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     .ok_or_else(|| "server did not return a supported SVM x402 challenge".to_string())?;
 
     let rpc = RpcClient::new(rpc_url);
-    let payment_header = build_payment_header(&signer, &rpc, &requirements).await?;
+    let mut payment_header = build_payment_header(&signer, &rpc, &requirements).await?;
+    if let Ok(network) = env::var("X402_INTEROP_MUTATE_ACCEPTED_NETWORK") {
+        payment_header = mutate_accepted_network(&payment_header, network.trim())?;
+    }
 
     let paid_response = http
         .get(&target_url)
@@ -105,4 +109,24 @@ fn read_memory_signer(
 
 fn headers_to_map(headers: Vec<(String, String)>) -> HashMap<String, String> {
     headers.into_iter().collect()
+}
+
+fn mutate_accepted_network(
+    payment_header: &str,
+    network: &str,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    if network.is_empty() {
+        return Ok(payment_header.to_string());
+    }
+
+    let decoded = base64::engine::general_purpose::STANDARD.decode(payment_header)?;
+    let mut envelope: serde_json::Value = serde_json::from_slice(&decoded)?;
+    let accepted = envelope
+        .get_mut("accepted")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("payment envelope has no accepted object")?;
+    accepted.insert("network".to_string(), serde_json::Value::String(network.to_string()));
+
+    let mutated = serde_json::to_vec(&envelope)?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(mutated))
 }

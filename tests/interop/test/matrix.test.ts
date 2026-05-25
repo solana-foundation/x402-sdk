@@ -3,11 +3,11 @@ import type { ImplementationDefinition } from "../src/implementations";
 import { selectInteropPairs } from "../src/matrix";
 
 function client(id: string): ImplementationDefinition {
-  return { id, label: id, role: "client", command: ["true"], enabled: true };
+  return { id, label: id, role: "client", command: ["true"], capabilities: ["exact"], enabled: true };
 }
 
 function server(id: string): ImplementationDefinition {
-  return { id, label: id, role: "server", command: ["true"], enabled: true };
+  return { id, label: id, role: "server", command: ["true"], capabilities: ["exact"], enabled: true };
 }
 
 describe("interop matrix selection", () => {

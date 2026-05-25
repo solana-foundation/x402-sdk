@@ -27,6 +27,10 @@ The repo will keep the same broad organization as `solana-mpp-sdk`: per-language
 
 The interop harness uses the canonical TypeScript client and server against a local Surfpool runtime so CI exercises real Solana `exact` payments, not fixture-only envelopes. Other languages can attach to the same adapter contract as their client/server paths mature.
 
+Usage-based interop work is planned separately from the current `exact`
+baseline. See [Usage-Based Interop Roadmap](docs/interop/usage-based-roadmap.md)
+for the proposed boundary between x402 `upto` and session compatibility work.
+
 ## Rust quick start
 
 ```bash
