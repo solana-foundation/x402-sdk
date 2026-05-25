@@ -5,6 +5,10 @@
   "packageManager": "pnpm@10.14.0",
   "scripts": {
     "test": "vitest run",
+    "test:probe:python-client": "X402_INTEROP_CLIENTS=python X402_INTEROP_SERVERS=rust vitest run test/e2e.test.ts --testNamePattern \"client pays\"",
+    "test:probe:python-server": "X402_INTEROP_CLIENTS=typescript X402_INTEROP_SERVERS=python vitest run test/e2e.test.ts --testNamePattern \"client pays\"",
+    "test:probe:python-syntax": "cd ../../python && python3 -m compileall -q src tests",
+    "test:probe:python-unit": "cd ../../python && PYTHONPATH=src python3 -m unittest discover -s tests",
     "test:smoke": "vitest run test/e2e.test.ts --testNamePattern \"client pays\"",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"

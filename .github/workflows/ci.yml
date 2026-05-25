@@ -45,6 +45,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
       - uses: pnpm/action-setup@v4
         with:
           version: 10.14.0
@@ -57,6 +60,17 @@ jobs:
       - name: Build Rust interop adapters
         run: cargo build --bin interop_client --bin interop_server
         working-directory: rust
+      - name: Install Python interop adapter
+        run: |
+          python -m pip install -e .
+          python -m pip install coverage
+        working-directory: python
+      - name: Test Python interop adapter
+        run: |
+          python -m compileall -q src tests
+          PYTHONPATH=src python -m coverage run -m unittest discover -s tests
+          python -m coverage report --fail-under=90
+        working-directory: python
       - name: Install interop harness
         run: pnpm install
         working-directory: tests/interop
@@ -69,3 +83,9 @@ jobs:
         env:
           X402_INTEROP_PROFILE: reference-spine
           X402_INTEROP_REFERENCE: rust
+      - name: Run Python client against Rust server
+        run: pnpm test:probe:python-client
+        working-directory: tests/interop
+      - name: Run TypeScript client against Python server
+        run: pnpm test:probe:python-server
+        working-directory: tests/interop
